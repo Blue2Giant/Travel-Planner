@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>高德路线规划｜Travel Planner</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .back { display:inline-block; margin-bottom:20px; color:#39749f; text-decoration:none; font-size:.86rem; font-weight:700; }
+      .map-legend { display:flex; gap:8px; flex-wrap:wrap; padding:11px 8px 3px; }.map-legend.hidden { display:none; }
+      .legend { color:#41566d; font-size:.78rem; font-weight:700; }
+      .legend::before { content:""; display:inline-block; width:19px; border-top:5px solid; border-radius:4px; margin-right:5px; vertical-align:middle; }
+      .legend.walk::before { border-color:#64748b; border-top-style:dashed; }.legend.subway::before { border-color:#7c3aed; }.legend.bus::before { border-color:#ea580c; }.legend.railway::before { border-color:#0891b2; }.legend.taxi::before { border-color:#f59e0b; }
+      .transit-list article { cursor:pointer; border-radius:8px; }.transit-list article.focused { background:#eef7ff; box-shadow:inset 3px 0 #1680dd; padding-left:9px; }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <a class="back" href="/">← 返回 Demo 首页</a>
+      <header><p class="eyebrow">AMAP ROUTE MVP</p><h1>高德路线规划</h1><p>输入两个地点，比较真实驾车与综合公共交通路线。</p></header>
+      <form id="route-form" class="search-panel">
+        <label>起点<input id="origin" value="上海虹桥火车站" required /></label>
+        <button class="swap" type="button" id="swap" title="交换起终点">⇅</button>
+        <label>终点<input id="destination" value="上海迪士尼度假区" required /></label>
+        <button id="submit" type="submit">查询路线 <span>→</span></button>
+      </form>
+      <p id="status" class="status" aria-live="polite">请填写高德 Key 后查询路线。</p>
+      <section id="places" class="places hidden"></section>
+      <section id="modes" class="modes hidden"></section>
+      <section class="map-panel"><div id="map"><div class="map-placeholder">正在准备地图…</div></div><div id="map-legend" class="map-legend hidden" aria-label="公共交通路线图例"></div></section>
+      <section id="details" class="details"><p class="empty">查询后将在这里展示路线详情。</p></section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

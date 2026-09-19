@@ -1,0 +1,24 @@
+{
+  "name": "travel-planner-demos",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check public/ctrip.js && node --check public/xiaohongshu.js && node --check src/amap/poi.js && node --check src/amap/driving.js && node --check src/amap/transit.js && node --check src/ctrip/service.js && node --check src/xiaohongshu/guide.js && node --check src/xiaohongshu/research.js && npm run ctrip:mcp:build",
+    "guide": "node scripts/generate-guide.js",
+    "guide:demo": "node scripts/generate-guide.js --demo",
+    "import:xhs": "node scripts/import-xiaohongshu-raw.js",
+    "ctrip:mcp:build": "npm --prefix ctrip-travel-mcp run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "zod": "^4.6.5"
+  }
+}

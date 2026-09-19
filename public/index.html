@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="高德路线、携程交通住宿与小红书攻略三个只读旅行 Demo。" />
+    <title>Travel Planner Demos</title>
+    <link rel="stylesheet" href="/home.css" />
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <p class="eyebrow">TRAVEL PLANNER · 3 DEMOS</p>
+        <h1>一次旅行，<br /><i>三个信息入口。</i></h1>
+        <p class="intro">用高德规划路线，用携程比较交通与住宿，再把小红书帖子整理成有出处的旅行攻略。</p>
+      </header>
+
+      <section class="demo-grid" aria-label="功能入口">
+        <article class="demo amap">
+          <div class="topline"><span>01</span><span class="status">需要 API Key</span></div>
+          <div class="icon">⌁</div>
+          <p class="eyebrow">AMAP ROUTE</p>
+          <h2>高德路线规划</h2>
+          <p>识别真实地点，比较驾车与综合公共交通，并在地图上绘制 API 返回的路线。</p>
+          <ul><li>驾车道路与导航步骤</li><li>地铁、公交、铁路和步行分段</li><li>真实 geometry 地图渲染</li></ul>
+          <a href="/amap.html">打开高德 Demo <span>→</span></a>
+        </article>
+
+        <article class="demo ctrip">
+          <div class="topline"><span>02</span><span class="status">只读查询</span></div>
+          <div class="icon">✈</div>
+          <p class="eyebrow">CTRIP · OPENCLI</p>
+          <h2>携程交通与住宿</h2>
+          <p>通过本地 OpenCLI 和浏览器会话查询国内机票、列车和住宿，保留原始响应。</p>
+          <ul><li>机票、火车与酒店检索</li><li>条件筛选与统一结果结构</li><li>一键生成静态 HTML 报告</li></ul>
+          <a href="/ctrip.html">打开携程 Demo <span>→</span></a>
+        </article>
+
+        <article class="demo xhs">
+          <div class="topline"><span>03</span><span class="status">只读研究</span></div>
+          <div class="icon">✦</div>
+          <p class="eyebrow">XIAOHONGSHU GUIDE</p>
+          <h2>小红书攻略生成</h2>
+          <p>读取搜索与帖子详情，先落盘原始数据，再生成保留原帖来源的旅行攻略。</p>
+          <ul><li>严格限定三种只读 MCP 工具</li><li>至少两篇帖子才标记为共同提及</li><li>原帖链接和图片证据可追溯</li></ul>
+          <a href="/xiaohongshu.html">打开小红书 Demo <span>→</span></a>
+        </article>
+      </section>
+
+      <section class="samples">
+        <div><p class="eyebrow">GENERATED OUTPUTS</p><h2>不用配置服务，也能先看成果</h2></div>
+        <nav aria-label="已有 HTML 示例">
+          <a href="/guides/ctrip-live-demo.html">携程查询报告 ↗</a>
+          <a href="/guides/%E9%A6%99%E6%A0%BC%E9%87%8C%E6%8B%89.html">香格里拉攻略 ↗</a>
+          <a href="/guides/%E4%BA%AC%E9%83%BD.html">京都攻略 ↗</a>
+        </nav>
+      </section>
+
+      <footer><span>Node.js · Express · Vanilla JS</span><span>配置与使用方法见仓库 README</span></footer>
+    </main>
+  </body>
+</html>

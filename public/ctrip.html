@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>携程旅行查询</title><link rel="stylesheet" href="/ctrip.css"></head><body>
+<main><a class="back" href="/">← 返回 Demo 首页</a><header><p class="eyebrow">CTRIP · OPENCLI · READ ONLY</p><h1>把行程放在<br><i>一张清单</i>里。</h1><p>查询携程的国内机票、高铁与住宿。价格和余票来自实时页面，可能变化。</p></header>
+<section class="search"><nav><button class="active" data-kind="flights">✈️ 机票</button><button data-kind="trains">🚄 高铁 / 火车</button><button data-kind="hotels">⌂ 住宿</button></nav>
+<form id="search-form"><div id="fields"></div><button id="submit" type="submit">查询携程结果 <span>→</span></button></form></section>
+<p id="status" aria-live="polite">只读查询；不会登录、下单或改变你的携程账户。</p><section id="results" class="results"><div class="empty">填写行程后开始查询。</div></section></main><script src="/ctrip.js"></script></body></html>
