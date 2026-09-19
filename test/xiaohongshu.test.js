@@ -40,3 +40,18 @@ test('post compressor rejects sentence fragments and extracts explicit entities'
   assert.deepEqual(compact.hotelAreaMentions.map((item) => item.area), ['独克宗古城']);
   assert.ok(compact.foodMentions.some((item) => item.name === '牦牛肉火锅'));
 });
+
+test('post compressor binds only explicitly referenced remote images to entities', () => {
+  const compact = compressNote({
+    noteId: 'note-images', title: '配图测试',
+    desc: '📍普达措国家公园 p2、p3 湖水很美。牦牛肉火锅见图4。第2站：📍松赞林寺 夜游。',
+    imageList: ['http://img.example/1.webp', 'http://img.example/2.webp', 'http://img.example/3.webp', 'http://img.example/4.webp']
+  });
+  const blue = compact.mentionedPlaces.find((item) => item.name === '普达措国家公园');
+  const oldTown = compact.mentionedPlaces.find((item) => item.name === '噶丹·松赞林寺');
+  const food = compact.foodMentions.find((item) => item.name === '牦牛肉火锅');
+  assert.deepEqual(blue.imageEvidence.map((item) => item.sourceImageIndex), [1, 2]);
+  assert.equal(food.imageEvidence[0].sourceImageIndex, 3);
+  assert.deepEqual(oldTown.imageEvidence, []);
+  assert.ok(blue.imageEvidence.every((item) => item.url.startsWith('https://')));
+});

@@ -11,7 +11,7 @@ function classify(message, fallback = 'UPSTREAM_PARSE_ERROR') {
   return fallback;
 }
 
-export async function runOpencli(command, args, { timeoutMs = 30_000, retries = 2 } = {}) {
+export async function runOpencli(command, args, { timeoutMs = 60_000, retries = 2 } = {}) {
   if (!READ_ONLY.has(command)) throw new Error('只允许已登记的只读携程命令。');
   const binary = process.env.OPENCLI_BIN || 'opencli';
   // Retaining a trace only on failure makes intermittent browser-navigation

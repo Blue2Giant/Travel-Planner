@@ -16,6 +16,14 @@ export { buildXiaohongshuUrl };
 const list = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
 const unique = (values) => [...new Set(values.filter(Boolean))];
 const uniqueImages = (images) => [...new Map(images.map((image) => [image.url, image])).values()];
+const remoteImageUrl = (value) => String(value || '').replace(/^http:\/\//i, 'https://');
+function keepSingleOwner(groups) {
+  const claimed = new Set();
+  for (const item of groups.flat()) item.images = item.images.filter((image) => {
+    if (claimed.has(image.url)) return false;
+    claimed.add(image.url); return true;
+  });
+}
 
 function normalizePost(post) {
   const feedId = post.feedId || post.feed_id || post.id || '';
@@ -29,7 +37,7 @@ function normalizePost(post) {
     category: list(post.category),
     mentionedPlaces: list(post.mentionedPlaces), foodMentions: list(post.foodMentions),
     hotelAreaMentions: list(post.hotelAreaMentions), tips: list(post.tips),
-    images: list(post.images || post.imageList).map((image) => typeof image === 'string' ? image : image.url || image.urlDefault).filter(Boolean),
+    images: list(post.images || post.imageList).map((image) => remoteImageUrl(typeof image === 'string' ? image : image.url || image.urlDefault)).filter(Boolean),
     sourceUrl: normalizeXiaohongshuSourceUrl({ ...post, feedId, xsecToken }),
   };
 }
@@ -45,7 +53,7 @@ function collect(posts, key, mapper) {
     const evidence = list(item.images || item.imageEvidence).map((image) => {
       if (!image?.url || !image.caption) throw new Error(`“${name}” 的每张图片必须提供 url 与人工核对后的 caption。`);
       if (!post.images.includes(image.url)) throw new Error(`“${name}” 的图片不属于来源帖子 ${post.feedId}。`);
-      return { url: image.url, caption: image.caption, sourceFeedId: post.feedId };
+      return { url: remoteImageUrl(image.url), caption: image.caption, sourceFeedId: post.feedId, sourceImageIndex: image.sourceImageIndex, confidence: image.confidence };
     });
     old.images = uniqueImages([...old.images, ...evidence]);
     map.set(name, old);
@@ -86,6 +94,7 @@ export async function generateGuide(destination, { demo = false, researchMeta = 
   const tips = collect(posts, 'tips', (x) => ({ text: x.text || x.name }))
     .filter((item) => item.sources.length >= 2)
     .slice(0, 12);
+  keepSingleOwner([highlights, food, stayAreas, tips]);
   const recommendationImages = [...highlights, ...food, ...stayAreas, ...tips].flatMap((item) => item.images);
   if (new Set(recommendationImages.map((image) => image.url)).size !== recommendationImages.length) throw new Error('同一图片不能被用于多个推荐条目。');
   const rawMeta = raw.meta || {};

@@ -16,12 +16,11 @@ async function attempt(label, warnings, operation) {
 }
 
 function imageEvidence(item, guide) {
-  if (item.images?.length) return item.images;
   const sourceMap = new Map(guide.sources.map((source) => [source.feedId, source]));
-  return item.sources.flatMap((id) => {
-    const source = sourceMap.get(id);
-    return (source?.images || []).slice(0, 1).map((url, sourceImageIndex) => ({ url, source_note_id: id, source_post_url: source.url, source_image_index: sourceImageIndex, caption: `来源帖配图：${source.title || id}`, confidence: 0.45 }));
-  }).slice(0, 3);
+  return (item.images || []).filter((image) => image.confidence == null || image.confidence >= 0.8).map((image) => {
+    const source = sourceMap.get(image.sourceFeedId);
+    return { ...image, url: String(image.url || '').replace(/^http:\/\//i, 'https://'), source_note_id: image.sourceFeedId, source_post_url: source?.url || null, source_image_index: image.sourceImageIndex };
+  });
 }
 
 function socialEvidence(guides) {
@@ -62,7 +61,8 @@ async function planTransport(request, adapters, warnings) {
     const trainResult = await attempt(`${label}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
     const rankedFlights = rank((flightResult?.results || []).filter((item) => !/^\+\d+天$/.test(item.arrival_airport || '') && item.departure_airport && item.arrival_airport).map(flight), request.preferences);
     const rankedTrains = rank((trainResult?.results || []).map(train), request.preferences);
-    return { recommended: rankedFlights[0] || rankedTrains[0] || unavailable('flight', '未查询到可用方案。'), alternatives: [...rankedFlights.slice(1, 3), ...rankedTrains.slice(0, 2)].slice(0, 3) };
+    const failed = !flightResult && !trainResult;
+    return { recommended: rankedFlights[0] || rankedTrains[0] || unavailable('flight', failed ? '上游查询失败，不能据此判断无票；请稍后重试。' : '查询成功，但未返回可推荐班次。'), alternatives: [...rankedFlights.slice(1, 3), ...rankedTrains.slice(0, 2)].slice(0, 3) };
   };
   const outbound = await queryPair(request.trip.origin, first, request.trip.start_date, '去程');
   const returning = await queryPair(last, request.trip.origin, request.trip.end_date, '返程');
@@ -132,6 +132,7 @@ async function scheduleDays(request, attractions, hotel, transport, adapters, wa
     for (const bucket of buckets) {
       const firstDay = number === 1; const lastDay = number === request.trip.days;
       const sequence = [anchor, ...bucket.map((item) => item.poi), ...(bucket.length ? [anchor] : [])]; const legs = [];
+      const pointImages = new Map(bucket.map((item) => [item.poi.id, item.images?.[0] || null]));
       for (let index = 0; index < sequence.length - 1; index += 1) legs.push(await routeLeg(sequence[index], sequence[index + 1], adapters, warnings));
       let cursor = firstDay ? 15 * 60 : 9 * 60;
       const transfer = cityIndex > 0 && number === [...allocation.values()].slice(0, cityIndex).reduce((sum, value) => sum + value, 0) + 1 ? transport.intercity[cityIndex - 1]?.recommended : null;
@@ -139,7 +140,7 @@ async function scheduleDays(request, attractions, hotel, transport, adapters, wa
       bucket.forEach((item, index) => { cursor += legs[index]?.duration_minutes || 30; timeline.push({ time: clock(cursor), type: 'attraction', title: item.name, place: item.name, coordinates: item.coordinates, duration_minutes: item.recommended_duration_minutes, highlights: item.highlights.slice(0, 1), attraction_id: item.id }); cursor += item.recommended_duration_minutes; });
       cursor += bucket.length ? (legs.at(-1)?.duration_minutes || 30) : 0;
       timeline.push({ time: clock(cursor), type: lastDay ? 'transport' : 'hotel', title: lastDay ? '前往交通枢纽，准备晚间返程' : `返回 ${anchor.name}`, place: anchor.name, coordinates: location(anchor), subtitle: lastDay ? '以携程返程班次为准' : '休息 / 晚餐' });
-      days.push({ day: number, date: dateAdd(request.trip.start_date, number - 1), city, theme: bucket.map((item) => item.name).join(' · ') || `${city}机动日`, stay_area: stay.area, timeline, route_legs: legs, attraction_count: bucket.length, map: { points: sequence.map((item, index) => ({ id: `${number}-${index}`, name: item.name, order: index + 1, ...location(item) })), legs } });
+      days.push({ day: number, date: dateAdd(request.trip.start_date, number - 1), city, theme: bucket.map((item) => item.name).join(' · ') || `${city}机动日`, stay_area: stay.area, timeline, route_legs: legs, attraction_count: bucket.length, map: { points: sequence.map((item, index) => { const image = pointImages.get(item.id); return { id: `${number}-${index}`, name: item.name, order: index + 1, ...location(item), image_url: image?.url || null, image_caption: image?.caption || null }; }), legs } });
       number += 1;
     }
   }

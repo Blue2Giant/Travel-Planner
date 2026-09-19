@@ -51,7 +51,7 @@ test('builds a source-backed plan with Ctrip inventory and AMap route geometry',
   assert.ok(plan.hotel.recommended.every((hotel) => hotel.provider === 'ctrip'));
   assert.ok(plan.attractions.every((item) => item.support_count >= 2 && item.poi.provider === 'amap'));
   assert.ok(plan.days.flatMap((day) => day.route_legs).every((leg) => leg.provider === 'amap' && leg.polyline.length >= 2));
-  assert.ok(plan.attractions.every((item) => item.images[0].source_note_id));
+  assert.ok(plan.attractions.every((item) => item.images.length === 0));
   assert.equal(plan.validation.valid, true);
 });
 
@@ -64,4 +64,6 @@ test('renders interactive AMap containers and clickable route detail controls', 
   assert.match(html, /route-drawer/);
   assert.match(html, /webapi\.amap\.com\/maps/);
   assert.match(html, /景点图鉴与帖子配图/);
+  assert.match(html, /image-lightbox/);
+  assert.match(html, /dblclick/);
 });

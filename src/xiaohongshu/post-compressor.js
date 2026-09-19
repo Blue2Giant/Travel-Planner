@@ -16,6 +16,21 @@ const clean = (value) => String(value || '')
   .trim();
 const unique = (items) => [...new Set(items.filter(Boolean))];
 const cut = (value, maximum) => clean(value).slice(0, maximum);
+const remoteImageUrl = (value) => String(value || '').replace(/^http:\/\//i, 'https://');
+
+function referencedImages(content, name, images) {
+  const clauses = content.split(/[。！？;；\n]|(?=📍)/).filter((clause) => clause.includes(name));
+  const indices = [];
+  for (const clause of clauses) {
+    for (const match of clause.matchAll(/(?:p|图)\s*(\d+)(?:\s*[-—~至到]\s*(?:p|图)?\s*(\d+))?/gi)) {
+      const start = Number(match[1]); const end = Number(match[2] || start);
+      for (let index = start; index <= end && index - start < 6; index += 1) indices.push(index - 1);
+    }
+  }
+  return unique(indices).map((index) => images[index]).filter(Boolean).map((image) => ({
+    url: image.url, caption: `原帖 P${image.index + 1}：文字明确对应“${name}”`, sourceImageIndex: image.index, confidence: 0.9
+  }));
+}
 
 export function likelyBadEntity(value) {
   const name = clean(value).replace(/^(?:第?[\d一二三四五六七八九十]+(?:站|点|号)\s*[:：-]?|[#\s:：-]+)/, '').trim();
@@ -96,7 +111,7 @@ export function compressNote(note, { kind = 'overview', sourceUrl = '' } = {}) {
   const names = explicitPlaces(content);
   const images = (note.imageList || note.images || []).map((image, index) => ({
     index,
-    url: typeof image === 'string' ? image : image.urlDefault || image.url || image.urlPre || '',
+    url: remoteImageUrl(typeof image === 'string' ? image : image.urlDefault || image.url || image.urlPre || ''),
     width: typeof image === 'object' ? image.width ?? null : null,
     height: typeof image === 'object' ? image.height ?? null : null,
     ocrText: null,
@@ -109,9 +124,7 @@ export function compressNote(note, { kind = 'overview', sourceUrl = '' } = {}) {
     routeMentions: [],
     tips: tips(content).filter((tip) => tip.includes(name)),
     sentiment: 'neutral',
-    imageEvidence: names.length === 1 && images.length ? [{
-      url: images[0].url, caption: '来源帖首图（景点通用图）', sourceImageIndex: 0, confidence: 0.5
-    }] : []
+    imageEvidence: referencedImages(content, name, images)
   }));
   return {
     feedId: note.noteId || note.feedId || note.id || '',
@@ -131,7 +144,7 @@ export function compressNote(note, { kind = 'overview', sourceUrl = '' } = {}) {
     content: cut(content, 700),
     images,
     mentionedPlaces: attractions,
-    foodMentions: foods(content).map((name) => ({ name, category: '当地美食', reason: `原帖将${name}列为当地美食；具体口味与店铺选择请查看来源帖子。`, imageEvidence: [] })),
+    foodMentions: foods(content).map((name) => ({ name, category: '当地美食', reason: `原帖将${name}列为当地美食；具体口味与店铺选择请查看来源帖子。`, imageEvidence: referencedImages(content, name, images) })),
     hotelAreaMentions: stayAreas(content).map((area) => ({
       area, goodFor: '以原帖住宿场景为准', pros: [cut(sentenceAround(content, area), 90)], cons: [], images: []
     })),
