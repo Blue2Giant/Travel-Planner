@@ -121,10 +121,12 @@ MCP 提供 `search_flights`、`search_roundtrip_flights`、`search_trains`、`se
 
 ```text
 check_login_status
-  → search_feeds
+  → 规划攻略 / 景点 / 行程 / 路线 / 美食 / 住宿 / 避坑等查询
+  → search_feeds（候选合并、互动量与相关性排序、近重复去重）
   → 原始搜索响应写入 data/raw/
-  → get_feed_detail
+  → get_feed_detail（默认目标 20 篇，按内容类型平衡抽样）
   → 原始详情写入 data/raw/posts/
+  → 单帖压缩、实体规范化、多帖共识聚合
   → data/processed/*.json
   → output/<目的地>.html
 ```

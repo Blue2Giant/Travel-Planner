@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js",
     "check": "node --check server.js && node --check public/app.js && node --check public/ctrip.js && node --check public/xiaohongshu.js && node --check src/amap/poi.js && node --check src/amap/driving.js && node --check src/amap/transit.js && node --check src/ctrip/service.js && node --check src/xiaohongshu/guide.js && node --check src/xiaohongshu/research.js && npm run ctrip:mcp:build",
     "guide": "node scripts/generate-guide.js",
     "guide:demo": "node scripts/generate-guide.js --demo",

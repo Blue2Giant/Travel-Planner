@@ -9,7 +9,7 @@ form.addEventListener('submit', async (event) => {
   const place = destination.value.trim();
   if (!place) return;
   generate.disabled = true; destination.disabled = true;
-  result.innerHTML = '<p class="loading">正在检查登录、串行搜索 4 组关键词并读取候选帖子。搜索过程可能需要几分钟…</p>';
+  result.innerHTML = '<p class="loading">正在检查登录、规划多组关键词、排序去重并读取 15–25 篇候选帖子。搜索过程可能需要几分钟…</p>';
   try {
     const response = await fetch('/api/xiaohongshu/guides', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destination: place }) });
     const data = await response.json();

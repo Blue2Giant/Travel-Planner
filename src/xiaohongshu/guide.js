@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildXiaohongshuUrl, normalizeXiaohongshuSourceUrl } from './mcp.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const DATA = path.join(ROOT, 'data');
@@ -10,13 +11,7 @@ export function fileSlug(destination) {
   return destination.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'guide';
 }
 
-export function buildXiaohongshuUrl(feedId, xsecToken) {
-  if (!feedId) return '';
-  const base = `https://www.xiaohongshu.com/explore/${encodeURIComponent(feedId)}`;
-  return xsecToken
-    ? `${base}?xsec_token=${encodeURIComponent(xsecToken)}&xsec_source=pc_feed`
-    : base;
-}
+export { buildXiaohongshuUrl };
 
 const list = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -35,7 +30,7 @@ function normalizePost(post) {
     mentionedPlaces: list(post.mentionedPlaces), foodMentions: list(post.foodMentions),
     hotelAreaMentions: list(post.hotelAreaMentions), tips: list(post.tips),
     images: list(post.images || post.imageList).map((image) => typeof image === 'string' ? image : image.url || image.urlDefault).filter(Boolean),
-    sourceUrl: post.sourceUrl || post.source_url || post.url || post.noteUrl || post.note_url || post.share_url || buildXiaohongshuUrl(feedId, xsecToken),
+    sourceUrl: normalizeXiaohongshuSourceUrl({ ...post, feedId, xsecToken }),
   };
 }
 
@@ -73,7 +68,7 @@ export function renderGuide(guide) {
   return html;
 }
 
-export async function generateGuide(destination, { demo = false } = {}) {
+export async function generateGuide(destination, { demo = false, researchMeta = {} } = {}) {
   if (!destination?.trim()) throw new Error('请提供目的地。');
   const slug = fileSlug(destination);
   const rawFile = path.join(DATA, 'raw', `${slug}-posts.json`);
@@ -82,13 +77,26 @@ export async function generateGuide(destination, { demo = false } = {}) {
   const posts = (Array.isArray(raw) ? raw : raw.posts || []).map(normalizePost).filter((x) => x.feedId);
   if (!posts.length) throw new Error('原始数据中没有可用帖子。');
   const sources = posts.map((p) => ({ feedId: p.feedId, noteId: p.feedId, xsecToken: p.xsecToken, title: p.title, author: p.author, url: p.sourceUrl, sourceUrl: p.sourceUrl, images: p.images, likes: p.metrics.likes, favorites: p.metrics.favorites }));
-  const highlights = collect(posts, 'mentionedPlaces', (x) => ({ name: x.name, description: x.reason || x.description || '帖子中提及的地点或体验' }));
+  const highlights = collect(posts, 'mentionedPlaces', (x) => ({ name: x.name, description: x.reason || x.description || '帖子中提及的地点或体验' }))
+    .filter((item) => item.sources.length >= 2);
   const food = collect(posts, 'foodMentions', (x) => ({ name: x.name, type: x.category || x.type || '美食', reason: x.reason || '帖子中提及' }));
-  const stayAreas = collect(posts, 'hotelAreaMentions', (x) => ({ name: x.area || x.name, goodFor: x.goodFor || '', pros: list(x.pros), cons: list(x.cons) }));
-  const tips = collect(posts, 'tips', (x) => ({ text: x.text || x.name }));
+  const stayAreas = collect(posts, 'hotelAreaMentions', (x) => ({ name: x.area || x.name, goodFor: x.goodFor || '', pros: list(x.pros), cons: list(x.cons) }))
+    .filter((item) => item.sources.length >= 2)
+    .slice(0, 5);
+  const tips = collect(posts, 'tips', (x) => ({ text: x.text || x.name }))
+    .filter((item) => item.sources.length >= 2)
+    .slice(0, 12);
   const recommendationImages = [...highlights, ...food, ...stayAreas, ...tips].flatMap((item) => item.images);
   if (new Set(recommendationImages.map((image) => image.url)).size !== recommendationImages.length) throw new Error('同一图片不能被用于多个推荐条目。');
-  const guide = { destination: destination.trim(), summary: `整理自 ${posts.length} 篇已保存的帖子；每项均保留来源。`, highlights, food, stayAreas, tips, sources, demo };
+  const rawMeta = raw.meta || {};
+  const meta = {
+    searchedPostCount: researchMeta.searchedPostCount ?? rawMeta.searchedPostCount ?? posts.length,
+    fetchedPostCount: researchMeta.fetchedPostCount ?? rawMeta.fetchedPostCount ?? posts.length,
+    usedPostCount: sources.length,
+    queryCount: researchMeta.queryCount ?? rawMeta.queryCount ?? null,
+    generatedAt: new Date().toISOString()
+  };
+  const guide = { destination: destination.trim(), meta, summary: `检索 ${meta.searchedPostCount} 篇候选，读取并整理 ${posts.length} 篇帖子；每项均保留来源。`, highlights, food, stayAreas, tips, sources, demo };
   await mkdir(path.join(DATA, 'processed'), { recursive: true }); await mkdir(OUTPUT, { recursive: true });
   await writeFile(path.join(DATA, 'processed', `${slug}-sources.json`), JSON.stringify(posts, null, 2));
   await writeFile(path.join(DATA, 'processed', `${slug}-guide.json`), JSON.stringify(guide, null, 2));
