@@ -3,7 +3,7 @@ const BAD_ENTITY_PATTERNS = [
   '下高铁', '去民宿', '一天给', '上午', '下午', '出发', '行程'
   , '不要导航', '一下车', '就能看到', '得搜', '离龟山', '之后', '先环湖', '一路穿梭', '一次是去', '的是上'
 ];
-const GENERIC_PLACE_WORDS = new Set(['机场', '车站', '古城', '市区', '县城', '景区', '湿地', '环湖', '附近', '周边']);
+const GENERIC_PLACE_WORDS = new Set(['机场', '车站', '古城', '市区', '县城', '景区', '湿地', '雪山', '环湖', '附近', '周边']);
 const PLACE_SUFFIX = /(?:古城|寺|湖|雪山|峡谷|草原|公园|村|塔|广场|景区|博物馆|市场|湿地|江|山|海)$/;
 const TIP_TERMS = /预约|开放|门票|高反|海拔|防晒|温差|交通|打车|自驾|公交|徒步|拍照|禁止|避坑|排队|时间|路况|习俗/;
 const FOOD_SUFFIX = /(?:火锅|米线|米糕|米粉|烤肉|羊排|烤包子|包子|酥油茶|青稞饼|藏香猪|牲牛肉|咖啡|茶|鱼)$/;
@@ -28,6 +28,7 @@ export function canonicalEntityName(value) {
     .replace(/^[📍\s:：>→➡\d第站号-]+/gu, '')
     .replace(/[\uff08(].*?[\uff09)]/g, '')
     .replace(/^(?:午饭后打车去|回古城可以去|顺路打卡|最后选择了|途径|远眺|基本是|整体是|游玩|打卡|推荐|去|到)+/u, '')
+    .replace(/^.*(?:背靠|靠近|来自|看见|直面|俯瞰|参观|逛完|选择|可选|住在)/u, '')
     .replace(/(?:景区|旅游区)$/u, '')
     .trim();
   const aliases = new Map([
@@ -50,6 +51,8 @@ function explicitPlaces(content) {
   }
   const prose = /(?:^|[，。；：、]|去|到|逛|看|游玩|打卡|推荐|途径|远眺)([\p{L}·]{2,12}?(?:古城|寺|湖|雪山|峡谷|草原|公园|村|塔|广场|景区|博物馆|市场|湿地|海))(?=[，。；：、\s和与]|$)/gu;
   for (const match of content.matchAll(prose)) found.push(match[1]);
+  const broad = /([\p{Script=Han}·]{2,14}?(?:古城|古镇|寺|湖|雪山|峡谷|草原|公园|村|塔|广场|博物馆|市场|湿地|海))(?=[，。；：、\s）)➠→]|$)/gu;
+  for (const match of content.matchAll(broad)) found.push(match[1]);
   return unique(found.map(canonicalEntityName).filter((name) => !likelyBadEntity(name)));
 }
 

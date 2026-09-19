@@ -19,10 +19,19 @@
         <div class="row"><input id="destination" name="destination" value="香格里拉" maxlength="60" required autofocus /><button id="generate" type="submit">生成攻略</button></div>
         <p class="hint">只读取登录状态、搜索结果与帖子详情；不会发布、评论、点赞或收藏。首次生成约需 1–4 分钟，请勿关闭此页面。</p>
       </form>
+      <form id="travel-plan-form">
+        <label for="plan-origin">出发地</label>
+        <input id="plan-origin" name="origin" value="北京" maxlength="40" />
+        <label for="plan-destination">目的地（可填写多个城市，用“、”分隔）</label>
+        <input id="plan-destination" name="destination" value="香格里拉、丽江" maxlength="80" required />
+        <div class="date-row"><label>开始日期<input id="plan-start" type="date" value="2026-10-02" required /></label><label>结束日期<input id="plan-end" type="date" value="2026-10-07" required /></label></div>
+        <div class="plan-actions"><button id="generate-plan" type="submit">生成完整路线规划</button></div>
+        <p class="hint">先聚合小红书多帖推荐，再查询携程交通和酒店，并使用高德验证 POI 与每天的逐段路线。</p>
+      </form>
       <section id="result" class="result" aria-live="polite"><p>准备就绪。</p></section>
       <section class="rules">
         <h2>图片规则</h2>
-        <p>系统不会自动把一篇帖子的图片配到多个景点。只有已人工核对且带说明的条目级图片才会进入最终攻略；自动检索生成的未核验条目只展示文字和原帖链接。</p>
+        <p>景点图片必须能追溯到提及该地点的小红书来源帖子；未做图像语义核验的图片会明确标注为“来源帖配图”。</p>
       </section>
     </main>
     <script src="/xiaohongshu.js"></script>

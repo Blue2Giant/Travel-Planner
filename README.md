@@ -8,6 +8,8 @@
 
 项目使用 Node.js、Express 和原生 JavaScript。三个 Demo 共用一个本地服务，但可以分别配置、分别体验。
 
+在三个独立 Demo 之上，仓库还提供一个旅行规划编排器和个人 Codex Skill。它们复用底层能力，不替代或合并三个 Demo。
+
 ## 已实现效果
 
 | Demo | 已实现 | 数据来源 / 依赖 | 入口 |
@@ -15,6 +17,7 @@
 | 高德 | POI 识别；驾车和公交路线；道路、站点、距离、耗时；真实 geometry 绘制 | 高德 Web 服务 API + JS API | `/amap.html` |
 | 携程 | 国内机票、列车、住宿查询；筛选；原始响应落盘；HTML 报告 | 本地 OpenCLI、`ctrip` adapter、Chrome Browser Bridge | `/ctrip.html` |
 | 小红书 | 登录检查；搜索；帖子详情；多帖共识；来源链接；静态攻略 | 本地小红书 MCP | `/xiaohongshu.html` |
+| 旅行规划编排 | 多城市需求解析；小红书多帖候选；携程交通与酒店；高德 POI、逐段路线与交互地图；TravelPlan JSON、校验报告和 HTML | 三条实时只读能力 | `/api/travel-plans` |
 
 启动后访问 <http://localhost:3000> 可以看到统一入口。
 
@@ -26,6 +29,7 @@
 - [香格里拉旅行攻略](output/香格里拉.html)
 - [京都旅行攻略](output/京都.html)
 - [上海旅行攻略](output/上海.html)
+- [丽江 · 香格里拉 2026-10-02—10-07 旅行规划](output/丽江-香格里拉-2026-10-02-2026-10-07.html)
 
 示例是生成时刻的结果快照，仅用于展示页面和数据结构。票价、余票、营业信息与旅行建议都可能变化，请以来源平台的当前页面为准。
 
@@ -152,6 +156,67 @@ open output/京都.html
 npm run guide -- 京都
 ```
 
+## 生成完整旅行规划
+
+完整规划按照以下顺序执行：
+
+```text
+旅行请求
+  → 小红书只读研究与多帖共识
+  → 高德 POI 验证
+  → 携程往返交通、城际列车和酒店查询
+  → 景点空间分配与每日通勤约束
+  → 高德逐段路线 geometry
+  → TravelPlan JSON 与校验报告
+  → 交互式 HTML
+```
+
+命令行示例：
+
+```bash
+npm run travel-plan -- \
+  --origin="北京" \
+  --destinations="香格里拉、丽江" \
+  --start="2026-10-02" \
+  --end="2026-10-07" \
+  --pace="relaxed" \
+  --max-attractions="3" \
+  --max-commute="180"
+```
+
+也可以传入 JSON：
+
+```bash
+npm run travel-plan -- --input=/absolute/path/to/request.json
+```
+
+结果包括：
+
+- `output/<目的地>-<开始日期>-<结束日期>.html`
+- `data/processed/travel-plans/<名称>.json`
+- `data/processed/travel-plans/<名称>-validation.json`
+- `data/raw/travel-plans/<名称>-request.json`
+
+HTML 使用 [香格里拉 → 丽江样例](output/香格里拉-丽江-2026-10-02-2026-10-07.html) 的视觉体系，但所有内容、酒店、班次、POI 和路线都来自当前请求。每一天有独立高德地图；点击景点可以定位，点击通勤段可以高亮路径并查看高德返回的逐步说明。
+
+如果携程超时、高德额度耗尽或某个目的地缺少足够证据，校验结果会标记 `complete: false`。系统不会用演示数据伪装成实时结果。
+
+### 使用 Codex Skill
+
+个人 Skill 已安装在：
+
+```text
+~/.codex/skills/travel-plan-report
+```
+
+可以直接请求：
+
+```text
+使用 $travel-plan-report，10 月 2 日从北京出发，依次游玩香格里拉和丽江，10 月 7 日晚上回北京。节奏舒缓，每天最多 3 个景点。
+```
+
+Skill 会提取参数、调用本仓库的编排器、检查完整性，并返回 HTML、TravelPlan JSON 和校验报告路径。它只执行只读查询，不进行小红书互动、预订或支付。
+
 ## 目录结构
 
 ```text
@@ -164,7 +229,8 @@ Travel-Planner/
 ├── src/
 │   ├── amap/               # POI、驾车、公交与归一化
 │   ├── ctrip/              # OpenCLI 调用、归一化、报告
-│   └── xiaohongshu/        # 只读 MCP、研究、攻略生成
+│   ├── xiaohongshu/        # 只读 MCP、研究、攻略生成
+│   └── travel-plan/        # 三源编排、校验和交互 HTML renderer
 ├── ctrip-travel-mcp/       # 可独立注册的携程只读 MCP Server
 ├── scripts/                # CLI 生成与导入脚本
 ├── data/
@@ -184,6 +250,7 @@ npm start                   # 启动服务
 npm run check               # 静态语法与 MCP 构建检查
 npm run guide -- 京都       # 从已有 raw 数据生成攻略
 npm run guide:demo -- 京都  # 生成离线演示数据与攻略
+npm run travel-plan          # 生成北京 → 香格里拉 · 丽江的实时规划 HTML
 npm run ctrip:mcp:build     # 检查携程 MCP
 ```
 
@@ -197,6 +264,7 @@ npm run ctrip:mcp:build     # 检查携程 MCP
 | `POST` | `/api/ctrip/report` | 将携程结果写成 HTML |
 | `POST` | `/api/xiaohongshu/guides` | 在线检索并生成小红书攻略 |
 | `POST` | `/api/guides` | 从已保存帖子或演示数据生成攻略 |
+| `POST` | `/api/travel-plans` | 串联三类能力，生成 TravelPlan JSON、校验报告与带高德交互地图的 HTML |
 
 ## 数据与安全说明
 

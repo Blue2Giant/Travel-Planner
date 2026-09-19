@@ -162,10 +162,10 @@ export async function researchAndGenerate(destination, options = {}) {
     posts
   });
   await save(path.join(debugDir, '08_validation_report.json'), validationReport({ queries, candidates, selected: fetchedCandidates, posts, failures }));
-  return generateGuide(destination, { researchMeta: { searchedPostCount: candidates.length, fetchedPostCount: posts.length, queryCount: queries.length } });
+  return generateGuide(destination, { writeHtml: options.writeHtml !== false, researchMeta: { searchedPostCount: candidates.length, fetchedPostCount: posts.length, queryCount: queries.length } });
 }
 
-export async function regenerateFromSavedDetails(destination) {
+export async function regenerateFromSavedDetails(destination, { writeHtml = true } = {}) {
   const slug = fileSlug(destination);
   const rawDir = path.join(ROOT, 'data/raw');
   const debugDir = path.join(ROOT, 'data/processed/debug', slug);
@@ -192,5 +192,5 @@ export async function regenerateFromSavedDetails(destination) {
     },
     posts
   });
-  return generateGuide(destination);
+  return generateGuide(destination, { writeHtml });
 }

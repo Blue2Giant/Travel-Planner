@@ -13,6 +13,7 @@ import { flights, trains, hotels } from './src/ctrip/service.js';
 import { opencliError } from './src/ctrip/opencli.js';
 import { writeCtripReport } from './src/ctrip/report.js';
 import { z } from 'zod';
+import { generateTravelPlan } from './src/travel-plan/orchestrator.js';
 
 const app = express();
 app.use(express.json());
@@ -78,6 +79,15 @@ app.post('/api/ctrip/report', async (req, res) => {
   if (!['flights', 'trains', 'hotels'].includes(kind) || !data?.results) return res.status(400).json({ error: '缺少可生成报告的查询结果。' });
   const result = await writeCtripReport(kind, data);
   res.status(201).json({ ...result, htmlUrl: '/guides/ctrip-report.html' });
+});
+app.post('/api/travel-plans', async (req, res) => {
+  const input = req.body || {};
+  if (!input.destination && !input.destinations) return res.status(400).json({ error: '请填写目的地。' });
+  if (!input.start_date || !input.end_date) return res.status(400).json({ error: '请填写开始和结束日期。' });
+  try {
+    const result = await generateTravelPlan(input);
+    res.status(201).json({ ...result.plan, htmlUrl: `/guides/${encodeURIComponent(path.basename(result.htmlFile))}`, files: { request: result.requestFile, plan: result.planFile, html: result.htmlFile } });
+  } catch (error) { res.status(400).json({ error: error.message || '生成旅游规划失败。' }); }
 });
 app.use('/guides', express.static('output'));
 const port = process.env.PORT || 3000;

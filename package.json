@@ -10,9 +10,10 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check public/app.js && node --check public/ctrip.js && node --check public/xiaohongshu.js && node --check src/amap/poi.js && node --check src/amap/driving.js && node --check src/amap/transit.js && node --check src/ctrip/service.js && node --check src/xiaohongshu/guide.js && node --check src/xiaohongshu/research.js && npm run ctrip:mcp:build",
+    "check": "node --check server.js && node --check public/app.js && node --check public/ctrip.js && node --check public/xiaohongshu.js && node --check src/amap/poi.js && node --check src/amap/driving.js && node --check src/amap/transit.js && node --check src/ctrip/service.js && node --check src/xiaohongshu/guide.js && node --check src/xiaohongshu/research.js && node --check src/travel-plan/adapters.js && node --check src/travel-plan/planner.js && node --check src/travel-plan/validator.js && node --check src/travel-plan/orchestrator.js && node --check src/travel-plan/report.js && node --check src/travel-plan/requirements.js && npm run ctrip:mcp:build",
     "guide": "node scripts/generate-guide.js",
     "guide:demo": "node scripts/generate-guide.js --demo",
+    "travel-plan": "node scripts/generate-travel-plan.js",
     "import:xhs": "node scripts/import-xiaohongshu-raw.js",
     "ctrip:mcp:build": "npm --prefix ctrip-travel-mcp run build"
   },

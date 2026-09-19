@@ -68,7 +68,7 @@ export function renderGuide(guide) {
   return html;
 }
 
-export async function generateGuide(destination, { demo = false, researchMeta = {} } = {}) {
+export async function generateGuide(destination, { demo = false, researchMeta = {}, writeHtml = true } = {}) {
   if (!destination?.trim()) throw new Error('请提供目的地。');
   const slug = fileSlug(destination);
   const rawFile = path.join(DATA, 'raw', `${slug}-posts.json`);
@@ -100,6 +100,7 @@ export async function generateGuide(destination, { demo = false, researchMeta = 
   await mkdir(path.join(DATA, 'processed'), { recursive: true }); await mkdir(OUTPUT, { recursive: true });
   await writeFile(path.join(DATA, 'processed', `${slug}-sources.json`), JSON.stringify(posts, null, 2));
   await writeFile(path.join(DATA, 'processed', `${slug}-guide.json`), JSON.stringify(guide, null, 2));
-  const htmlFile = path.join(OUTPUT, `${slug}.html`); await writeFile(htmlFile, renderGuide(guide));
+  const htmlFile = path.join(OUTPUT, `${slug}.html`);
+  if (writeHtml) await writeFile(htmlFile, renderGuide(guide));
   return { slug, htmlFile, guideFile: path.join(DATA, 'processed', `${slug}-guide.json`), sourceFile: path.join(DATA, 'processed', `${slug}-sources.json`), posts: posts.length, demo };
 }
