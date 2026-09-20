@@ -37,6 +37,29 @@ function socialEvidence(guides) {
   return { attractions, foods, tips, stayAreas, sources };
 }
 
+async function enrichMissingImages(evidence, adapters, warnings) {
+  if (!adapters.social.enrichImages) return evidence;
+  const used = new Set([...evidence.attractions, ...evidence.foods].flatMap((item) => item.images || []).map((image) => image.url));
+  for (const city of new Set([...evidence.attractions, ...evidence.foods].map((item) => item.city))) {
+    const targets = [
+      ...evidence.attractions.filter((item) => item.city === city && !item.images.length).map((item) => ({ id: item.id, name: item.name, kind: 'attraction' })),
+      ...evidence.foods.filter((item) => item.city === city && !item.images.length).map((item) => ({ id: `${item.city}-${item.name}`, name: item.name, kind: 'food' }))
+    ];
+    if (!targets.length) continue;
+    const result = await attempt(`小红书${city}缺图素材搜索失败`, warnings, () => adapters.social.enrichImages(city, targets));
+    for (const image of result?.images || []) {
+      if (used.has(image.url)) continue;
+      const target = image.kind === 'attraction'
+        ? evidence.attractions.find((item) => item.id === image.target_id)
+        : evidence.foods.find((item) => `${item.city}-${item.name}` === image.target_id);
+      if (!target || target.images.length) continue;
+      target.images = [{ ...image, source_note_id: image.sourceFeedId, source_image_index: image.sourceImageIndex }]; used.add(image.url);
+    }
+    evidence.sources = [...new Map([...evidence.sources, ...(result?.sources || [])].map((source) => [source.feedId, source])).values()];
+  }
+  return evidence;
+}
+
 async function verifyAttractions(evidence, adapters, warnings) {
   const verified = [];
   for (const item of evidence.attractions) {
@@ -51,7 +74,8 @@ function score(item, avoidEarly) {
   return (durationMinutes(item.duration) || 420) + (numeric(item.price ?? item.from_price) || 1800) / 8 + (avoidEarly && hour < 7 ? 800 : 0);
 }
 function rank(items, preferences) { return [...items].sort((a, b) => score(a, preferences.avoid_early_morning) - score(b, preferences.avoid_early_morning)); }
-function flight(item) { return { ...item, mode: 'flight', duration_minutes: durationMinutes(item.duration), price: item.price ?? null, provider: 'ctrip', truth: 'verified' }; }
+function elapsedClock(start, end) { const [sh, sm] = String(start || '').split(':').map(Number); const [eh, em] = String(end || '').split(':').map(Number); if (![sh, sm, eh, em].every(Number.isFinite)) return null; return (eh * 60 + em - sh * 60 - sm + 1440) % 1440; }
+function flight(item) { return { ...item, mode: 'flight', duration_minutes: durationMinutes(item.duration) || elapsedClock(item.departure_time, item.arrival_time), price: item.price ?? null, from: item.departure_airport, to: item.arrival_airport, provider: 'ctrip', truth: 'verified' }; }
 function train(item) { return { ...item, mode: 'train', duration_minutes: durationMinutes(item.duration), price: item.from_price ?? item.price ?? null, from: item.departure_station, to: item.arrival_station, provider: 'ctrip', truth: 'verified' }; }
 
 async function planTransport(request, adapters, warnings) {
@@ -62,17 +86,22 @@ async function planTransport(request, adapters, warnings) {
     const rankedFlights = rank((flightResult?.results || []).filter((item) => !/^\+\d+天$/.test(item.arrival_airport || '') && item.departure_airport && item.arrival_airport).map(flight), request.preferences);
     const rankedTrains = rank((trainResult?.results || []).map(train), request.preferences);
     const failed = !flightResult && !trainResult;
-    return { recommended: rankedFlights[0] || rankedTrains[0] || unavailable('flight', failed ? '上游查询失败，不能据此判断无票；请稍后重试。' : '查询成功，但未返回可推荐班次。'), alternatives: [...rankedFlights.slice(1, 3), ...rankedTrains.slice(0, 2)].slice(0, 3) };
+    const options = [...rankedFlights.slice(0, 4), ...rankedTrains.slice(0, 3)].map((item) => ({ ...item, travel_date: date }));
+    return { date, from, to, recommended: options[0] || unavailable('flight', failed ? '上游查询失败，不能据此判断无票；请稍后重试。' : '查询成功，但未返回可推荐班次。'), alternatives: options.slice(1, 5), options };
   };
   const outbound = await queryPair(request.trip.origin, first, request.trip.start_date, '去程');
   const returning = await queryPair(last, request.trip.origin, request.trip.end_date, '返程');
   const intercity = [];
   for (let index = 0; index < request.trip.destinations.length - 1; index += 1) {
     const from = request.trip.destinations[index]; const to = request.trip.destinations[index + 1];
-    const date = dateAdd(request.trip.start_date, Math.max(1, Math.round(request.trip.days * (index + 1) / request.trip.destinations.length) - 1));
-    const result = await attempt(`${from}到${to}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
-    const options = rank((result?.results || []).map(train), request.preferences);
-    intercity.push({ from, to, date, recommended: options[0] || unavailable('train', '未查询到城际列车。'), alternatives: options.slice(1, 4) });
+    const daysBeforeTransfer = request.trip.destinations.slice(0, index + 1).reduce((sum, city) => sum + dayAllocation(request).get(city), 0);
+    const date = dateAdd(request.trip.start_date, daysBeforeTransfer);
+    const trainResult = await attempt(`${from}到${to}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
+    const flightResult = await attempt(`${from}到${to}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: from, destination: to, date, limit: 8 }));
+    const trainOptions = rank((trainResult?.results || []).map(train), request.preferences);
+    const flightOptions = rank((flightResult?.results || []).filter((item) => !/^\+\d+天$/.test(item.arrival_airport || '') && item.departure_airport && item.arrival_airport).map(flight), request.preferences);
+    const options = [...trainOptions.slice(0, 4), ...flightOptions.slice(0, 3)].map((item) => ({ ...item, travel_date: date }));
+    intercity.push({ from, to, date, recommended: options[0] || unavailable('train', !trainResult && !flightResult ? '城际交通查询失败，不能据此判断无票。' : '未查询到城际列车或航班。'), alternatives: options.slice(1, 5), options });
   }
   return { outbound, return: returning, intercity };
 }
@@ -95,8 +124,26 @@ async function planHotels(request, evidence, adapters, warnings) {
     const result = await attempt(`携程${window.city}酒店查询失败`, warnings, () => adapters.inventory.searchHotels({ city: window.city, checkin: window.checkin, checkout: window.checkout, keyword: area, min_score: 4, limit: 10 }));
     const options = [...(result?.results || [])].sort((a, b) => (numeric(b.score) || 0) - (numeric(a.score) || 0) || (numeric(a.price) || Infinity) - (numeric(b.price) || Infinity)).map((item) => ({
       ...item, city: window.city, area: item.district || area, xhs_area: area, price_per_night: item.price, rating: item.score,
-      advantages: [`匹配小红书推荐区域“${area}”`, '携程真实候选，价格和库存以下单页为准。'], provider: 'ctrip', truth: 'verified'
+      advantages: [`靠近小红书推荐住宿范围“${area}”`, '携程真实候选，价格和库存以下单页为准。'], images: [], provider: 'ctrip', truth: 'verified'
     }));
+    for (const option of options.slice(0, 5)) {
+      if (!adapters.inventory.getHotelDetail) break;
+      const detail = await attempt(`携程酒店详情“${option.name}”查询失败`, warnings, () => adapters.inventory.getHotelDetail({ hotel_id: option.hotel_id }));
+      if (detail?.result) Object.assign(option, { facilities: detail.result.facilities, check_in_out: detail.result.check_in_out, rating_breakdown: detail.result.rating_breakdown, introduction: [detail.result.facilities ? `设施：${detail.result.facilities}` : '', detail.result.check_in_out || ''].filter(Boolean).join('；') });
+      if (adapters.inventory.getHotelImages) {
+        const imageResult = await attempt(`携程酒店图片“${option.name}”查询失败`, warnings, () => adapters.inventory.getHotelImages({ hotel_id: option.hotel_id }));
+        option.images = (imageResult?.results || []).map((image, index) => ({ url: image.image_url, caption: image.caption, source_post_url: image.source_url, source_image_index: index, provider: 'ctrip', confidence: 1 }));
+      }
+    }
+    if (adapters.social.enrichImages && options.length) {
+      const targets = options.slice(0, 5).map((option) => ({ id: `${window.city}-hotel-${option.hotel_id}`, name: option.name, kind: 'hotel' }));
+      const material = await attempt(`小红书${window.city}酒店素材搜索失败`, warnings, () => adapters.social.enrichImages(window.city, targets));
+      for (const image of material?.images || []) {
+        const option = options.find((candidate) => `${window.city}-hotel-${candidate.hotel_id}` === image.target_id);
+        if (option && !option.images.length) option.images = [{ ...image, source_note_id: image.sourceFeedId, source_image_index: image.sourceImageIndex }];
+      }
+      evidence.sources = [...new Map([...evidence.sources, ...(material?.sources || [])].map((source) => [source.feedId, source])).values()];
+    }
     stays.push({ ...window, area, area_evidence: areaEvidence || null, recommended: options.slice(0, 2), alternatives: options.slice(2, 5) });
   }
   return { recommended_area: stays.map((item) => `${item.city}：${item.area}`).join('；'), reason: '住宿区域来自小红书多帖经验，具体酒店来自携程查询。', area_tips: stays.flatMap((item) => [...(item.area_evidence?.pros || []), ...(item.area_evidence?.cons || [])]).slice(0, 6), stays, recommended: stays.flatMap((item) => item.recommended), alternatives: stays.flatMap((item) => item.alternatives) };
@@ -130,17 +177,15 @@ async function scheduleDays(request, attractions, hotel, transport, adapters, wa
     for (const item of candidates.filter((candidate) => !eligible.includes(candidate))) warnings.push(`${item.name}距住宿区域较远，未塞入日程，保留在景点候选中。`);
     const buckets = distribute(eligible, allocation.get(city), cap);
     for (const bucket of buckets) {
-      const firstDay = number === 1; const lastDay = number === request.trip.days;
-      const sequence = [anchor, ...bucket.map((item) => item.poi), ...(bucket.length ? [anchor] : [])]; const legs = [];
+      const firstDay = number === 1;
+      const sequence = [anchor, ...bucket.map((item) => item.poi)]; const legs = [];
       const pointImages = new Map(bucket.map((item) => [item.poi.id, item.images?.[0] || null]));
       for (let index = 0; index < sequence.length - 1; index += 1) legs.push(await routeLeg(sequence[index], sequence[index + 1], adapters, warnings));
       let cursor = firstDay ? 15 * 60 : 9 * 60;
       const transfer = cityIndex > 0 && number === [...allocation.values()].slice(0, cityIndex).reduce((sum, value) => sum + value, 0) + 1 ? transport.intercity[cityIndex - 1]?.recommended : null;
-      const timeline = [{ time: transfer?.departure_time || clock(cursor), type: transfer ? 'transport' : 'hotel', title: transfer ? `${transfer.train_no || '城际列车'}：${transfer.from} → ${transfer.to}` : firstDay ? `抵达并前往 ${anchor.name}` : `从 ${anchor.name} 出发`, place: anchor.name, coordinates: location(anchor), subtitle: transfer ? `${transfer.departure_time || '—'} 出发，${transfer.arrival_time || '—'} 抵达；随后前往住宿` : firstDay ? '抵达、接驳、入住和休息' : '住宿 / 集合点' }];
+      const timeline = [{ time: transfer?.departure_time || clock(cursor), type: transfer ? 'transport' : 'hotel', title: transfer ? `${transfer.train_no || transfer.flight_no || (transfer.mode === 'flight' ? '城际航班' : '城际列车')}：${transfer.from} → ${transfer.to}` : firstDay ? `抵达并前往 ${anchor.name}` : `从 ${anchor.name} 出发`, place: anchor.name, coordinates: location(anchor), subtitle: transfer ? `${transport.intercity[cityIndex - 1]?.date || ''} ${transfer.departure_time || '—'} 出发，${transfer.arrival_time || '—'} 抵达；随后前往住宿` : firstDay ? '抵达、接驳、入住和休息' : '住宿 / 集合点' }];
       bucket.forEach((item, index) => { cursor += legs[index]?.duration_minutes || 30; timeline.push({ time: clock(cursor), type: 'attraction', title: item.name, place: item.name, coordinates: item.coordinates, duration_minutes: item.recommended_duration_minutes, highlights: item.highlights.slice(0, 1), attraction_id: item.id }); cursor += item.recommended_duration_minutes; });
-      cursor += bucket.length ? (legs.at(-1)?.duration_minutes || 30) : 0;
-      timeline.push({ time: clock(cursor), type: lastDay ? 'transport' : 'hotel', title: lastDay ? '前往交通枢纽，准备晚间返程' : `返回 ${anchor.name}`, place: anchor.name, coordinates: location(anchor), subtitle: lastDay ? '以携程返程班次为准' : '休息 / 晚餐' });
-      days.push({ day: number, date: dateAdd(request.trip.start_date, number - 1), city, theme: bucket.map((item) => item.name).join(' · ') || `${city}机动日`, stay_area: stay.area, timeline, route_legs: legs, attraction_count: bucket.length, map: { points: sequence.map((item, index) => { const image = pointImages.get(item.id); return { id: `${number}-${index}`, name: item.name, order: index + 1, ...location(item), image_url: image?.url || null, image_caption: image?.caption || null }; }), legs } });
+      days.push({ day: number, date: dateAdd(request.trip.start_date, number - 1), city, theme: bucket.map((item) => item.name).join(' · ') || `${city}机动日`, stay_area: stay.area, timeline, route_legs: legs, attraction_count: bucket.length, map: { points: sequence.map((item, index) => { const image = pointImages.get(item.id); const role = index === 0 ? 'start' : index === sequence.length - 1 ? 'end' : 'waypoint'; return { id: `${number}-${index}`, name: item.name, order: index + 1, role, ...location(item), image_url: image?.url || null, image_caption: image?.caption || null }; }), legs } });
       number += 1;
     }
   }
@@ -150,7 +195,22 @@ async function scheduleDays(request, attractions, hotel, transport, adapters, wa
 export async function createTravelPlan(request, adapters) {
   const warnings = []; const guides = [];
   for (const city of request.trip.destinations) guides.push(await adapters.social.research(city, request));
-  const evidence = socialEvidence(guides); const attractions = await verifyAttractions(evidence, adapters, warnings);
+  const evidence = await enrichMissingImages(socialEvidence(guides), adapters, warnings);
+  if (adapters.social.researchPitfalls) {
+    const researchedTips = [];
+    for (const city of request.trip.destinations) {
+      const result = await attempt(`小红书${city}踩坑提醒搜索失败`, warnings, () => adapters.social.researchPitfalls(city));
+      researchedTips.push(...(result?.tips || [])); evidence.sources = [...new Map([...evidence.sources, ...(result?.sources || [])].map((source) => [source.feedId, source])).values()];
+    }
+    if (researchedTips.length) evidence.tips = researchedTips;
+  }
+  if (adapters.social.researchStayAreas) {
+    for (const city of request.trip.destinations.filter((destination) => !evidence.stayAreas.some((item) => item.city === destination))) {
+      const result = await attempt(`小红书${city}住宿范围搜索失败`, warnings, () => adapters.social.researchStayAreas(city));
+      evidence.stayAreas.push(...(result?.areas || []).map((area) => ({ ...area, city }))); evidence.sources = [...new Map([...evidence.sources, ...(result?.sources || [])].map((source) => [source.feedId, source])).values()];
+    }
+  }
+  const attractions = await verifyAttractions(evidence, adapters, warnings);
   if (!attractions.length) throw new Error('没有找到同时满足“小红书多帖共识”和“高德 POI 可验证”的景点。');
   const transport = await planTransport(request, adapters, warnings);
   const hotel = await planHotels(request, evidence, adapters, warnings);

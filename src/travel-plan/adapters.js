@@ -1,10 +1,10 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { flights, hotels, trains } from '../ctrip/service.js';
+import { flights, hotelDetail, hotelImages, hotels, trains } from '../ctrip/service.js';
 import { resolvePlace } from '../amap/poi.js';
 import { getDrivingRoute } from '../amap/driving.js';
 import { getTransitRoute } from '../amap/transit.js';
-import { regenerateFromSavedDetails, researchAndGenerate } from '../xiaohongshu/research.js';
+import { regenerateFromSavedDetails, researchAndGenerate, researchPitfallTips, researchStayAreas, researchTargetImages } from '../xiaohongshu/research.js';
 import { fileSlug } from '../xiaohongshu/guide.js';
 
 async function hasSavedDetails(destination) {
@@ -24,9 +24,12 @@ export function createAdapters() {
           ? regenerateFromSavedDetails(destination, { writeHtml: false })
           : researchAndGenerate(destination, { writeHtml: false, days: request.trip.days, month: Number(request.trip.start_date.slice(5, 7)) }));
         return JSON.parse(await readFile(result.guideFile, 'utf8'));
-      }
+      },
+      async enrichImages(destination, targets) { return researchTargetImages(destination, targets); },
+      async researchPitfalls(destination) { return researchPitfallTips(destination); },
+      async researchStayAreas(destination) { return researchStayAreas(destination); }
     },
-    inventory: { searchFlights: flights, searchTrains: trains, searchHotels: hotels },
+    inventory: { searchFlights: flights, searchTrains: trains, searchHotels: hotels, getHotelDetail: hotelDetail, getHotelImages: hotelImages },
     geo: {
       async searchPoi(query) { if (!amapKey) throw new Error('AMAP_WEB_SERVICE_KEY 未配置。'); return { ...(await resolvePlace(query, amapKey)), provider: 'amap' }; },
       async route(origin, destination, mode = 'driving') { if (!amapKey) throw new Error('AMAP_WEB_SERVICE_KEY 未配置。'); return mode === 'transit' ? getTransitRoute(origin, destination, amapKey) : getDrivingRoute(origin, destination, amapKey); }

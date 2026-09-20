@@ -51,6 +51,11 @@ test('builds a source-backed plan with Ctrip inventory and AMap route geometry',
   assert.ok(plan.hotel.recommended.every((hotel) => hotel.provider === 'ctrip'));
   assert.ok(plan.attractions.every((item) => item.support_count >= 2 && item.poi.provider === 'amap'));
   assert.ok(plan.days.flatMap((day) => day.route_legs).every((leg) => leg.provider === 'amap' && leg.polyline.length >= 2));
+  assert.ok(plan.days.every((day) => day.map.points[0].role === 'start'));
+  assert.ok(plan.days.filter((day) => day.map.points.length > 1).every((day) => day.map.points.at(-1).role === 'end'));
+  assert.equal(plan.transport.intercity[0].date, '2026-10-05');
+  assert.ok(plan.transport.intercity[0].options.some((item) => item.mode === 'train'));
+  assert.ok(plan.transport.intercity[0].options.some((item) => item.mode === 'flight'));
   assert.ok(plan.attractions.every((item) => item.images.length === 0));
   assert.equal(plan.validation.valid, true);
 });
@@ -66,4 +71,35 @@ test('renders interactive AMap containers and clickable route detail controls', 
   assert.match(html, /景点图鉴与帖子配图/);
   assert.match(html, /image-lightbox/);
   assert.match(html, /dblclick/);
+  assert.match(html, /transport-list/);
+  assert.match(html, /2026-10-05/);
+  assert.match(html, /role==='start'\?'起'/);
+  assert.match(html, /role==='end'\?'终'/);
+  assert.match(html, /class="hotel-list"/);
+  assert.doesNotMatch(html, /<time>/);
+  assert.doesNotMatch(html, /返回 .*测试酒店/);
+  assert.match(html, /class="tip-list"/);
+});
+
+test('uses dedicated Xiaohongshu pitfall research when available', async () => {
+  const mocked = adapters();
+  mocked.social.researchPitfalls = async (city) => ({ tips: [{ text: `${city}专项踩坑提醒`, city, source_post_url: `https://www.xiaohongshu.com/explore/pitfall-${city}`, sources: [`pitfall-${city}`] }], sources: [{ feedId: `pitfall-${city}`, title: `${city}避坑`, url: `https://www.xiaohongshu.com/explore/pitfall-${city}`, images: [] }] });
+  const plan = await buildTravelPlan(request, { adapters: mocked });
+  assert.deepEqual(plan.practical_tips.map((item) => item.text), ['香格里拉专项踩坑提醒', '丽江专项踩坑提醒']);
+  const html = renderTravelPlan(plan);
+  assert.match(html, /查看踩坑原帖/);
+});
+
+test('runs targeted Xiaohongshu image enrichment only for missing attraction and food images', async () => {
+  const mocked = adapters(); const requested = [];
+  mocked.social.enrichImages = async (city, targets) => {
+    requested.push(...targets.map((target) => `${city}:${target.kind}:${target.name}`));
+    return { images: targets.map((target, index) => ({ target_id: target.id, target_name: target.name, kind: target.kind, url: `https://img.example/enriched-${city}-${index}.jpg`, caption: '定向素材帖首图', sourceFeedId: `image-${city}-${index}`, sourceImageIndex: 0, confidence: 0.85 })), sources: [] };
+  };
+  const plan = await buildTravelPlan(request, { adapters: mocked });
+  assert.ok(requested.some((item) => item.includes(':attraction:')));
+  assert.ok(requested.some((item) => item.includes(':food:')));
+  assert.ok(plan.attractions.every((item) => item.images.length === 1));
+  assert.ok(plan.foods.every((item) => item.images.length === 1));
+  assert.ok(plan.days.some((day) => day.map.points.some((point) => point.image_url)));
 });

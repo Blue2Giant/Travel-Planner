@@ -44,7 +44,10 @@ export async function hotels(input) {
   if (!cityId) { const error = new Error(`未能解析“${input.city}”的携程城市 ID。`); error.code = 'INVALID_CITY'; throw error; }
   const raw = await query('hotels', 'hotel-search', [String(cityId), '--checkin', input.checkin, '--checkout', input.checkout, '--limit', String(input.limit || 10)], input);
   let results = asList(raw).map((item) => ({ hotel_id: String(field(item, 'hotelId', 'hotel_id', 'id') || ''), name: field(item, 'name', 'hotelName'), en_name: field(item, 'enName', 'englishName') || null, star: num(field(item, 'star', 'starRating')), score: num(field(item, 'score', 'rating')), score_label: field(item, 'scoreLabel', 'ratingText') || null, review_count: num(field(item, 'reviewCount', 'commentCount')), city_name: field(item, 'cityName') || input.city, district: field(item, 'district', 'areaName') || null, address: field(item, 'address') || null, lat: num(field(item, 'lat', 'latitude')), lon: num(field(item, 'lon', 'longitude')), price: num(field(item, 'price', 'fromPrice')), currency: currency(item), source_url: url(item) }));
-  if (input.keyword) results = results.filter((item) => `${item.name} ${item.district} ${item.address}`.includes(input.keyword));
+  if (input.keyword) {
+    const matched = results.filter((item) => `${item.name} ${item.district} ${item.address}`.includes(input.keyword));
+    if (matched.length) results = matched;
+  }
   if (input.min_star != null) results = results.filter((item) => item.star !== null && item.star >= input.min_star);
   if (input.min_score != null) results = results.filter((item) => item.score !== null && item.score >= input.min_score);
   if (input.max_price != null) results = results.filter((item) => item.price !== null && item.price <= input.max_price);
@@ -55,5 +58,13 @@ export async function resolveHotelCity(input) {
   const results = asList(raw).map((item) => ({ city_id: field(item, 'cityId', 'city_id') || null, name: field(item, 'name', 'cityName', 'keyword') || null, source_url: url(item) })).filter((item) => item.city_id);
   return { ...meta(input), results };
 }
-export async function hotelDetail(input) { const raw = await query('hotel-detail', 'hotel', [input.hotel_id], input); return { ...meta(input), result: raw, note: '详情不包含完整实时房型价格列表。' }; }
+export async function hotelDetail(input) { const raw = await query('hotel-detail', 'hotel', [input.hotel_id], input); const item = asList(raw)[0] || raw || {}; return { ...meta(input), result: { hotel_id: String(field(item, 'hotelId', 'hotel_id') || input.hotel_id), name: field(item, 'name', 'hotelName') || null, facilities: field(item, 'facilities') || null, check_in_out: field(item, 'checkInOut') || null, rating_breakdown: field(item, 'ratingBreakdown') || null, review_count: num(field(item, 'reviewCount')), score: num(field(item, 'score')), source_url: url(item) }, note: '详情不包含完整实时房型价格列表。' }; }
+export async function hotelImages(input) {
+  const sourceUrl = `https://hotels.ctrip.com/hotels/detail/?hotelid=${encodeURIComponent(input.hotel_id)}`;
+  const response = await fetch(sourceUrl, { signal: AbortSignal.timeout(20000), headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!response.ok) throw new Error(`携程酒店图片页请求失败（HTTP ${response.status}）。`);
+  const html = await response.text(); const urls = [...html.matchAll(/https?:[^"'\s]+\.(?:jpg|jpeg|webp)/gi)].map((match) => match[0].replace(/\\u002F/g, '/')).filter((value) => /c-ctrip\.com\/images\//.test(value) && /_W_(?:1280|750|640|550|480)_/i.test(value));
+  const images = [...new Set(urls)].slice(0, 3).map((image_url, index) => ({ image_url, caption: index === 0 ? '携程酒店详情主图' : `携程酒店详情图片 ${index + 1}`, source_url: sourceUrl, provider: 'ctrip' }));
+  await persist('hotel-images', input, { sourceUrl, images }); return { ...meta(input), results: images };
+}
 export async function roundtripFlights(input) { const origin = airportCode(input.origin); const destination = airportCode(input.destination); const raw = await query('roundtrip-flights', 'flight-round', [origin, destination, '--depart', input.depart_date, '--return', input.return_date, '--limit', String(input.limit || 10)], input); return { ...meta({ ...input, origin_code: origin, destination_code: destination }), results: limit(asList(raw), input), return_leg_complete: false, note: '当前 OpenCLI 携程 adapter 返回去程候选及往返总价，返程具体航班尚未完整解析。' }; }

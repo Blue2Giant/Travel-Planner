@@ -21,12 +21,12 @@ function parseContent(result) {
   try { return JSON.parse(text); } catch { return text; }
 }
 
-export async function callXiaohongshu(tool, args = {}) {
+export async function callXiaohongshu(tool, args = {}, { timeoutMs = 90000 } = {}) {
   if (!READ_ONLY_TOOLS.has(tool)) throw new Error(`禁止调用非只读小红书工具：${tool}`);
   const response = await fetch(endpoint, {
     method: 'POST', headers: { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method: 'tools/call', params: { name: tool, arguments: args } }),
-    signal: AbortSignal.timeout(90000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
   if (!response.ok) throw new Error(`小红书 MCP 请求失败（HTTP ${response.status}）。`);
   const body = await response.json();

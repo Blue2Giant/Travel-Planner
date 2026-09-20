@@ -194,3 +194,106 @@ export async function regenerateFromSavedDetails(destination, { writeHtml = true
   });
   return generateGuide(destination, { writeHtml });
 }
+
+export async function researchTargetImages(destination, targets = []) {
+  if (!targets.length) return { images: [], sources: [] };
+  const slug = fileSlug(destination); const rawDir = path.join(ROOT, 'data/raw', 'image-search', slug);
+  const login = await callXiaohongshu('check_login_status');
+  await save(path.join(rawDir, 'login.json'), login.raw);
+  if (!/已登录|logged in/i.test(JSON.stringify(login.data))) throw new Error('小红书 MCP 未登录，无法执行缺图素材搜索。');
+  const images = []; const sources = []; const usedUrls = new Set();
+  for (const [index, target] of targets.entries()) {
+    const searchName = String(target.name).replace(/^噶丹[·・]?/, '').replace(target.kind === 'hotel' ? /[（(].*$/ : /$^/, '').trim();
+    const routeMap = target.kind === 'attraction' && /公园|雪山|峡谷|古城|寺|湖|景区|湿地/.test(target.name);
+    const suffix = target.kind === 'food' ? '美食 实拍' : target.kind === 'hotel' ? '酒店 入住 实拍' : routeMap ? '游览路线 景区地图' : '景点 实拍';
+    const keyword = `${destination} ${searchName} ${suffix}`;
+    const searchFile = path.join(rawDir, `v3-${String(index + 1).padStart(2, '0')}-${target.kind}-${fileSlug(searchName)}-search.json`);
+    let search;
+    try {
+      try {
+        const raw = JSON.parse(await readFile(searchFile, 'utf8')); search = { raw, data: parseStoredResult(raw) };
+      } catch {
+        search = await callXiaohongshu('search_feeds', { keyword }, { timeoutMs: 25000 }); await save(searchFile, search.raw);
+      }
+    } catch (error) {
+      await save(searchFile.replace(/\.json$/, '-error.json'), { target, keyword, error: error.message });
+      continue;
+    }
+    const candidates = rankCandidates(flattenSearchGroups([{ kind: `image_${target.kind}`, keyword, data: search.data }], destination), destination);
+    for (const candidate of candidates.slice(0, 5)) {
+      try {
+        const detailFile = path.join(rawDir, 'posts', `${candidate.feedId}.json`); let detail;
+        try {
+          const raw = JSON.parse(await readFile(detailFile, 'utf8')); detail = { raw, data: parseStoredResult(raw) };
+        } catch {
+          detail = await callXiaohongshu('get_feed_detail', { feed_id: candidate.feedId, xsec_token: candidate.xsecToken, load_all_comments: false }, { timeoutMs: 25000 }); await save(detailFile, detail.raw);
+        }
+        const note = noteFromDetail(detail.data); const title = String(note?.title || ''); const text = `${title} ${note?.desc || ''}`;
+        const exactEnough = target.kind === 'food' || target.kind === 'hotel' ? title.includes(searchName) : text.includes(searchName);
+        const routeEnough = !routeMap || /路线|地图|攻略|游览/.test(title);
+        if (!note || !exactEnough || !routeEnough) continue;
+        const first = (note.imageList || note.images || [])[0];
+        const imageUrl = String(typeof first === 'string' ? first : first?.urlDefault || first?.url || first?.urlPre || '').replace(/^http:\/\//i, 'https://');
+        if (!imageUrl || usedUrls.has(imageUrl)) continue;
+        usedUrls.add(imageUrl);
+        const sourceUrl = normalizeXiaohongshuSourceUrl({ ...candidate, ...note, feedId: candidate.feedId, xsecToken: candidate.xsecToken });
+        images.push({ target_id: target.id, target_name: target.name, kind: target.kind, url: imageUrl, caption: routeMap ? `“${target.name}”游览路线专项帖首图` : `关键词“${keyword}”定向素材帖首图`, sourceFeedId: candidate.feedId, sourceImageIndex: 0, source_post_url: sourceUrl, confidence: 0.9, evidence_type: routeMap ? 'keyword_route_map_post' : 'keyword_targeted_post' });
+        sources.push({ feedId: candidate.feedId, noteId: candidate.feedId, xsecToken: candidate.xsecToken, title: note.title || candidate.title, author: note.user?.nickname || candidate.author || '', url: sourceUrl, sourceUrl, images: [imageUrl] });
+        break;
+      } catch (error) {
+        await save(path.join(rawDir, 'posts', `${candidate.feedId}-error.json`), { feedId: candidate.feedId, error: error.message });
+      }
+    }
+    if (index + 1 < targets.length) await pause(SEARCH_DELAY);
+  }
+  await save(path.join(rawDir, 'result.json'), { destination, queriedAt: new Date().toISOString(), targets, images, sources });
+  return { images, sources };
+}
+
+export async function researchPitfallTips(destination) {
+  const slug = fileSlug(destination); const rawDir = path.join(ROOT, 'data/raw', 'pitfall-search', slug);
+  const keyword = `${destination} 避坑 踩坑 注意事项`;
+  const searchFile = path.join(rawDir, 'search.json'); let search;
+  try { const raw = JSON.parse(await readFile(searchFile, 'utf8')); search = { raw, data: parseStoredResult(raw) }; }
+  catch { try { search = await callXiaohongshu('search_feeds', { keyword }, { timeoutMs: 25000 }); await save(searchFile, search.raw); } catch (error) { await save(searchFile.replace(/\.json$/, '-error.json'), { keyword, error: error.message }); return { tips: [], sources: [] }; } }
+  const candidates = rankCandidates(flattenSearchGroups([{ kind: 'pitfall', keyword, data: search.data }], destination), destination).slice(0, 6);
+  const tips = []; const sources = [];
+  for (const candidate of candidates) {
+    try {
+      const detailFile = path.join(rawDir, 'posts', `${candidate.feedId}.json`); let detail;
+      try { const raw = JSON.parse(await readFile(detailFile, 'utf8')); detail = { raw, data: parseStoredResult(raw) }; }
+      catch { detail = await callXiaohongshu('get_feed_detail', { feed_id: candidate.feedId, xsec_token: candidate.xsecToken, load_all_comments: false }, { timeoutMs: 25000 }); await save(detailFile, detail.raw); }
+      const note = noteFromDetail(detail.data); if (!note) continue;
+      const sourceUrl = normalizeXiaohongshuSourceUrl({ ...candidate, ...note, feedId: candidate.feedId, xsecToken: candidate.xsecToken });
+      const compact = compressNote(note, { kind: 'pitfall', sourceUrl });
+      for (const tip of compact.tips) tips.push({ ...tip, city: destination, sources: [candidate.feedId], source_post_url: sourceUrl, evidence_type: 'targeted_pitfall_search' });
+      sources.push({ feedId: candidate.feedId, noteId: candidate.feedId, xsecToken: candidate.xsecToken, title: note.title || candidate.title, author: note.user?.nickname || candidate.author || '', url: sourceUrl, sourceUrl, images: compact.images.map((image) => image.url) });
+    } catch (error) { await save(path.join(rawDir, 'posts', `${candidate.feedId}-error.json`), { feedId: candidate.feedId, error: error.message }); }
+  }
+  const uniqueTips = [...new Map(tips.map((tip) => [tip.text, tip])).values()].slice(0, 10);
+  await save(path.join(rawDir, 'result.json'), { destination, keyword, queriedAt: new Date().toISOString(), tips: uniqueTips, sources });
+  return { tips: uniqueTips, sources };
+}
+
+export async function researchStayAreas(destination) {
+  const slug = fileSlug(destination); const rawDir = path.join(ROOT, 'data/raw', 'stay-search', slug); const keyword = `${destination} 住宿 住哪里 酒店推荐`;
+  const searchFile = path.join(rawDir, 'search.json'); let search;
+  try { const raw = JSON.parse(await readFile(searchFile, 'utf8')); search = { raw, data: parseStoredResult(raw) }; }
+  catch { try { search = await callXiaohongshu('search_feeds', { keyword }, { timeoutMs: 25000 }); await save(searchFile, search.raw); } catch (error) { await save(searchFile.replace(/\.json$/, '-error.json'), { keyword, error: error.message }); return { areas: [], sources: [] }; } }
+  const candidates = rankCandidates(flattenSearchGroups([{ kind: 'stay', keyword, data: search.data }], destination), destination).slice(0, 8);
+  const mentions = []; const sources = [];
+  for (const candidate of candidates) {
+    try {
+      const detailFile = path.join(rawDir, 'posts', `${candidate.feedId}.json`); let detail;
+      try { const raw = JSON.parse(await readFile(detailFile, 'utf8')); detail = { raw, data: parseStoredResult(raw) }; }
+      catch { detail = await callXiaohongshu('get_feed_detail', { feed_id: candidate.feedId, xsec_token: candidate.xsecToken, load_all_comments: false }, { timeoutMs: 25000 }); await save(detailFile, detail.raw); }
+      const note = noteFromDetail(detail.data); if (!note) continue;
+      const sourceUrl = normalizeXiaohongshuSourceUrl({ ...candidate, ...note, feedId: candidate.feedId, xsecToken: candidate.xsecToken }); const compact = compressNote(note, { kind: 'stay', sourceUrl });
+      for (const area of compact.hotelAreaMentions) mentions.push({ ...area, name: area.area, source: candidate.feedId, source_post_url: sourceUrl });
+      sources.push({ feedId: candidate.feedId, noteId: candidate.feedId, xsecToken: candidate.xsecToken, title: note.title || candidate.title, author: note.user?.nickname || candidate.author || '', url: sourceUrl, sourceUrl, images: compact.images.map((image) => image.url) });
+    } catch (error) { await save(path.join(rawDir, 'posts', `${candidate.feedId}-error.json`), { feedId: candidate.feedId, error: error.message }); }
+  }
+  const grouped = new Map(); for (const item of mentions) { const old = grouped.get(item.name) || { name: item.name, goodFor: '参考小红书住宿专项帖子', pros: [], cons: [], sources: [], evidence_level: 'single-post' }; old.sources.push(item.source); old.pros.push(...(item.pros || [])); grouped.set(item.name, old); }
+  const areas = [...grouped.values()].map((item) => ({ ...item, sources: [...new Set(item.sources)], pros: [...new Set(item.pros)], evidence_level: new Set(item.sources).size >= 2 ? 'multi-post-consensus' : 'single-post' })).sort((a, b) => b.sources.length - a.sources.length).slice(0, 5);
+  await save(path.join(rawDir, 'result.json'), { destination, keyword, queriedAt: new Date().toISOString(), areas, sources }); return { areas, sources };
+}

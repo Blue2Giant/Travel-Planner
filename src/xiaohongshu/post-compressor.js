@@ -97,7 +97,7 @@ function stayAreas(content) {
     /(?:住|住在|住宿选|建议住)([\p{L}\p{N}·]{2,12}(?:古城|市区|县城|车站|机场)(?:内|外|北门|南门|附近|周边)?)/gu,
     /([\p{L}\p{N}·]{2,12}(?:北门|南门|东门|西门|车站|机场)附近)/gu
   ];
-  for (const pattern of patterns) for (const match of content.matchAll(pattern)) found.push(clean(match[1]).replace(/^(?:在了?|于)/, ''));
+  for (const pattern of patterns) for (const match of content.matchAll(pattern)) found.push(clean(match[1]).replace(/^.*(?:选择住在|建议住在|直接住在|住在)/, '').replace(/^(?:在了?|于|住宿就直接选择)/, ''));
   return unique(found.filter((name) => !likelyBadEntity(name))).slice(0, 5);
 }
 
