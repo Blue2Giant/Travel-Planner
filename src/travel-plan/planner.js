@@ -27,10 +27,10 @@ function socialEvidence(guides) {
   const attractions = guides.flatMap((guide) => guide.highlights.map((item) => ({
     id: `${guide.destination}-${item.name}`, city: guide.destination, name: item.name, summary: item.description,
     highlights: [item.description], support_count: new Set(item.sources).size, source_posts: item.sources,
-    images: imageEvidence(item, guide), recommended_duration_minutes: /雪山|国家公园|峡谷|大索道/.test(item.name) ? 240 : 120,
+    images: imageEvidence(item, guide), primary_source_id: item.sources[0] || null, source_refs: [...new Set(item.sources)], media_refs: [], recommended_duration_minutes: /雪山|国家公园|峡谷|大索道/.test(item.name) ? 240 : 120,
     truth: { experience: 'aggregated', duration: 'estimated' }
   }))).filter((item) => item.support_count >= 2);
-  const foods = guides.flatMap((guide) => guide.food.map((item) => ({ ...item, city: guide.destination, images: imageEvidence(item, guide).slice(0, 1) }))).slice(0, 10);
+  const foods = guides.flatMap((guide) => guide.food.map((item) => ({ ...item, id: `${guide.destination}-${item.name}`, entity_type: 'dish', city: guide.destination, primary_source_id: item.sources?.[0] || null, source_refs: [...new Set(item.sources || [])], media_refs: [], images: imageEvidence(item, guide).slice(0, 1) }))).slice(0, 10);
   const tips = guides.flatMap((guide) => guide.tips.map((item) => ({ ...item, city: guide.destination }))).slice(0, 14);
   const stayAreas = guides.flatMap((guide) => guide.stayAreas.map((item) => ({ ...item, city: guide.destination })));
   const sources = [...new Map(guides.flatMap((guide) => guide.sources).map((source) => [source.feedId, source])).values()];
@@ -69,28 +69,35 @@ async function verifyAttractions(evidence, adapters, warnings) {
   return verified;
 }
 
-function score(item, avoidEarly) {
+function score(item, preferences, journey) {
   const hour = Number(String(item.departure_time || '').slice(0, 2));
-  return (durationMinutes(item.duration) || 420) + (numeric(item.price ?? item.from_price) || 1800) / 8 + (avoidEarly && hour < 7 ? 800 : 0);
+  const arrivalHour = Number(String(item.arrival_time || '').slice(0, 2));
+  const morningPenalty = journey === 'outbound' && preferences.outbound_period === 'morning' && (hour < 7 || hour >= 12) ? 900 : 0;
+  const lateReturnPenalty = journey === 'return' && preferences.return_period === 'late_night' && arrivalHour < 21 ? 900 : 0;
+  return (durationMinutes(item.duration) || 420) + (numeric(item.price ?? item.from_price) || 1800) / 8 + (preferences.avoid_early_morning && hour < 7 ? 800 : 0) + morningPenalty + lateReturnPenalty;
 }
-function rank(items, preferences) { return [...items].sort((a, b) => score(a, preferences.avoid_early_morning) - score(b, preferences.avoid_early_morning)); }
+function rank(items, preferences, journey = 'intercity') { return [...items].sort((a, b) => score(a, preferences, journey) - score(b, preferences, journey)); }
 function elapsedClock(start, end) { const [sh, sm] = String(start || '').split(':').map(Number); const [eh, em] = String(end || '').split(':').map(Number); if (![sh, sm, eh, em].every(Number.isFinite)) return null; return (eh * 60 + em - sh * 60 - sm + 1440) % 1440; }
 function flight(item) { return { ...item, mode: 'flight', duration_minutes: durationMinutes(item.duration) || elapsedClock(item.departure_time, item.arrival_time), price: item.price ?? null, from: item.departure_airport, to: item.arrival_airport, provider: 'ctrip', truth: 'verified' }; }
 function train(item) { return { ...item, mode: 'train', duration_minutes: durationMinutes(item.duration), price: item.from_price ?? item.price ?? null, from: item.departure_station, to: item.arrival_station, provider: 'ctrip', truth: 'verified' }; }
+function validTrain(item, from, to) {
+  const price = numeric(item.from_price ?? item.price);
+  return item.departure_station && item.arrival_station && item.departure_station.includes(from) && item.arrival_station.includes(to) && (price === null || price > 0);
+}
 
 async function planTransport(request, adapters, warnings) {
   const first = request.trip.destinations[0]; const last = request.trip.destinations.at(-1);
-  const queryPair = async (from, to, date, label) => {
+  const queryPair = async (from, to, date, label, journey) => {
     const flightResult = await attempt(`${label}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: from, destination: to, date, limit: 12 }));
     const trainResult = await attempt(`${label}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
-    const rankedFlights = rank((flightResult?.results || []).filter((item) => !/^\+\d+天$/.test(item.arrival_airport || '') && item.departure_airport && item.arrival_airport).map(flight), request.preferences);
-    const rankedTrains = rank((trainResult?.results || []).map(train), request.preferences);
+    const rankedFlights = rank((flightResult?.results || []).filter((item) => item.departure_airport && item.arrival_airport).map(flight), request.preferences, journey);
+    const rankedTrains = rank((trainResult?.results || []).filter((item) => validTrain(item, from, to)).map(train), request.preferences, journey);
     const failed = !flightResult && !trainResult;
     const options = [...rankedFlights.slice(0, 4), ...rankedTrains.slice(0, 3)].map((item) => ({ ...item, travel_date: date }));
     return { date, from, to, recommended: options[0] || unavailable('flight', failed ? '上游查询失败，不能据此判断无票；请稍后重试。' : '查询成功，但未返回可推荐班次。'), alternatives: options.slice(1, 5), options };
   };
-  const outbound = await queryPair(request.trip.origin, first, request.trip.start_date, '去程');
-  const returning = await queryPair(last, request.trip.origin, request.trip.end_date, '返程');
+  const outbound = await queryPair(request.trip.origin, first, request.trip.start_date, '去程', 'outbound');
+  const returning = await queryPair(last, request.trip.origin, request.trip.end_date, '返程', 'return');
   const intercity = [];
   for (let index = 0; index < request.trip.destinations.length - 1; index += 1) {
     const from = request.trip.destinations[index]; const to = request.trip.destinations[index + 1];
@@ -98,8 +105,8 @@ async function planTransport(request, adapters, warnings) {
     const date = dateAdd(request.trip.start_date, daysBeforeTransfer);
     const trainResult = await attempt(`${from}到${to}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
     const flightResult = await attempt(`${from}到${to}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: from, destination: to, date, limit: 8 }));
-    const trainOptions = rank((trainResult?.results || []).map(train), request.preferences);
-    const flightOptions = rank((flightResult?.results || []).filter((item) => !/^\+\d+天$/.test(item.arrival_airport || '') && item.departure_airport && item.arrival_airport).map(flight), request.preferences);
+    const trainOptions = rank((trainResult?.results || []).filter((item) => validTrain(item, from, to)).map(train), request.preferences);
+    const flightOptions = rank((flightResult?.results || []).filter((item) => item.departure_airport && item.arrival_airport).map(flight), request.preferences);
     const options = [...trainOptions.slice(0, 4), ...flightOptions.slice(0, 3)].map((item) => ({ ...item, travel_date: date }));
     intercity.push({ from, to, date, recommended: options[0] || unavailable('train', !trainResult && !flightResult ? '城际交通查询失败，不能据此判断无票。' : '未查询到城际列车或航班。'), alternatives: options.slice(1, 5), options });
   }
@@ -162,7 +169,12 @@ function haversine(a, b) { const rad = (value) => value * Math.PI / 180; const d
 async function routeLeg(from, to, adapters, warnings) {
   const value = await attempt(`高德路线 ${from.name} → ${to.name} 查询失败`, warnings, () => adapters.geo.route(from, to, 'driving'));
   if (!value) return { from: from.name, to: to.name, mode: 'driving', mode_label: '驾车 / 打车', unavailable: true, provider: 'amap', polyline: [] };
-  return { from: from.name, to: to.name, mode: 'driving', mode_label: '驾车 / 打车', distance_meters: value.distanceMeters, duration_minutes: value.durationMinutes, polyline: value.polyline, steps: value.steps || [], provider: 'amap', queried_at: timestamp(), truth: 'verified' };
+  const first = value.polyline?.[0]; const last = value.polyline?.at(-1);
+  const startGap = first ? Math.round(haversine(location(from), { lng: Number(first[0]), lat: Number(first[1]) }) * 1000) : null;
+  const endGap = last ? Math.round(haversine(location(to), { lng: Number(last[0]), lat: Number(last[1]) }) * 1000) : null;
+  const gapStatus = startGap == null || endGap == null ? 'unavailable' : Math.max(startGap, endGap) > 300 ? 'fail' : Math.max(startGap, endGap) > 100 ? 'warn' : 'pass';
+  if (gapStatus === 'fail') warnings.push(`高德路线 ${from.name} → ${to.name} 的端点与 POI 相距超过 300 米，请留意最后一段步行或入口位置。`);
+  return { from: from.name, to: to.name, from_id: from.id, to_id: to.id, mode: 'driving', mode_label: '驾车 / 打车', distance_meters: value.distanceMeters, duration_minutes: value.durationMinutes, polyline: value.polyline, steps: value.steps || [], endpoint_validation: { start_gap_m: startGap, end_gap_m: endGap, status: gapStatus }, provider: 'amap', queried_at: timestamp(), truth: 'verified' };
 }
 
 async function scheduleDays(request, attractions, hotel, transport, adapters, warnings) {
@@ -178,14 +190,14 @@ async function scheduleDays(request, attractions, hotel, transport, adapters, wa
     const buckets = distribute(eligible, allocation.get(city), cap);
     for (const bucket of buckets) {
       const firstDay = number === 1;
-      const sequence = [anchor, ...bucket.map((item) => item.poi)]; const legs = [];
-      const pointImages = new Map(bucket.map((item) => [item.poi.id, item.images?.[0] || null]));
+      // Daily sightseeing maps deliberately contain attractions only. Lodging,
+      // arrival and transfer nodes remain in the timeline, never in geometry.
+      const sequence = bucket.map((item) => item.poi); const legs = [];
       for (let index = 0; index < sequence.length - 1; index += 1) legs.push(await routeLeg(sequence[index], sequence[index + 1], adapters, warnings));
-      let cursor = firstDay ? 15 * 60 : 9 * 60;
       const transfer = cityIndex > 0 && number === [...allocation.values()].slice(0, cityIndex).reduce((sum, value) => sum + value, 0) + 1 ? transport.intercity[cityIndex - 1]?.recommended : null;
-      const timeline = [{ time: transfer?.departure_time || clock(cursor), type: transfer ? 'transport' : 'hotel', title: transfer ? `${transfer.train_no || transfer.flight_no || (transfer.mode === 'flight' ? '城际航班' : '城际列车')}：${transfer.from} → ${transfer.to}` : firstDay ? `抵达并前往 ${anchor.name}` : `从 ${anchor.name} 出发`, place: anchor.name, coordinates: location(anchor), subtitle: transfer ? `${transport.intercity[cityIndex - 1]?.date || ''} ${transfer.departure_time || '—'} 出发，${transfer.arrival_time || '—'} 抵达；随后前往住宿` : firstDay ? '抵达、接驳、入住和休息' : '住宿 / 集合点' }];
-      bucket.forEach((item, index) => { cursor += legs[index]?.duration_minutes || 30; timeline.push({ time: clock(cursor), type: 'attraction', title: item.name, place: item.name, coordinates: item.coordinates, duration_minutes: item.recommended_duration_minutes, highlights: item.highlights.slice(0, 1), attraction_id: item.id }); cursor += item.recommended_duration_minutes; });
-      days.push({ day: number, date: dateAdd(request.trip.start_date, number - 1), city, theme: bucket.map((item) => item.name).join(' · ') || `${city}机动日`, stay_area: stay.area, timeline, route_legs: legs, attraction_count: bucket.length, map: { points: sequence.map((item, index) => { const image = pointImages.get(item.id); const role = index === 0 ? 'start' : index === sequence.length - 1 ? 'end' : 'waypoint'; return { id: `${number}-${index}`, name: item.name, order: index + 1, role, ...location(item), image_url: image?.url || null, image_caption: image?.caption || null }; }), legs } });
+      const timeline = [{ time: transfer?.departure_time || null, type: transfer ? 'transport' : 'hotel', title: transfer ? `${transfer.train_no || transfer.flight_no || (transfer.mode === 'flight' ? '城际航班' : '城际列车')}：${transfer.from} → ${transfer.to}` : firstDay ? `抵达并前往 ${anchor.name}` : `从 ${anchor.name} 出发`, place: anchor.name, coordinates: location(anchor), subtitle: transfer ? `${transport.intercity[cityIndex - 1]?.date || ''} ${transfer.departure_time || '—'} 出发，${transfer.arrival_time || '—'} 抵达；随后前往住宿` : firstDay ? '抵达、接驳、入住和休息' : '住宿 / 集合点' }];
+      bucket.forEach((item) => timeline.push({ time: null, type: 'attraction', title: item.name, place: item.name, coordinates: item.coordinates, duration_minutes: item.recommended_duration_minutes, highlights: item.highlights.slice(0, 1), attraction_id: item.id, source_refs: item.source_refs, image: item.images?.[0] || null }));
+      days.push({ day: number, date: dateAdd(request.trip.start_date, number - 1), city, theme: bucket.map((item) => item.name).join(' · ') || `${city}机动日`, stay_area: stay.area, timeline, route_legs: legs, attraction_count: bucket.length, map: { points: bucket.map((item, index) => ({ id: item.id, name: item.name, order: index + 1, role: bucket.length === 1 ? 'start' : index === 0 ? 'start' : index === bucket.length - 1 ? 'end' : 'waypoint', ...item.coordinates })), legs } });
       number += 1;
     }
   }
@@ -215,7 +227,8 @@ export async function createTravelPlan(request, adapters) {
   const transport = await planTransport(request, adapters, warnings);
   const hotel = await planHotels(request, evidence, adapters, warnings);
   const days = await scheduleDays(request, attractions, hotel, transport, adapters, warnings);
-  const plan = { trip: { ...request.trip, assumptions: request.assumptions }, travelers: request.travelers, preferences: request.preferences, constraints: request.constraints, transport, hotel, overview: { summary: `按用户输入顺序游玩${request.trip.destinations.join('、')}，每天围绕住宿区域做空间聚类并用高德逐段验证。`, day_clusters: days.map((day) => ({ day: day.day, city: day.city, points: day.map.points.map((item) => item.name) })) }, days, attractions, foods: evidence.foods, practical_tips: evidence.tips, source_posts: evidence.sources, metadata: { generated_at: timestamp(), mode: 'live', mode_label: 'LIVE · 三源编排', xhs_post_count: evidence.sources.length, xhs_query_time: timestamp(), ctrip_query_time: timestamp(), amap_query_time: timestamp(), warnings } };
+  const source_registry = Object.fromEntries(evidence.sources.map((source) => [source.feedId, { source_id: source.feedId, platform: 'xiaohongshu', note_id: source.feedId, title: source.title, author: source.author, canonical_url: source.url, retrieved_url: source.url, retrieved_at: timestamp() }]));
+  const plan = { trip: { ...request.trip, assumptions: request.assumptions }, travelers: request.travelers, preferences: request.preferences, constraints: request.constraints, transport, hotel, overview: { summary: `按用户输入顺序游玩${request.trip.destinations.join('、')}，每天仅对景点节点做空间聚类并用高德逐段验证。`, day_clusters: days.map((day) => ({ day: day.day, city: day.city, points: day.map.points.map((item) => item.name) })) }, days, attractions, foods: evidence.foods, practical_tips: evidence.tips, source_posts: evidence.sources, source_registry, metadata: { generated_at: timestamp(), mode: 'live', mode_label: 'LIVE · 分段校验编排', xhs_post_count: evidence.sources.length, xhs_query_time: timestamp(), ctrip_query_time: timestamp(), amap_query_time: timestamp(), warnings } };
   plan.validation = validateTravelPlan(plan);
   if (!plan.validation.valid) throw new Error(`旅行规划校验失败：${plan.validation.errors.join('；')}`);
   plan.metadata.warnings = plan.validation.warnings;

@@ -1,11 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { airportCode } from './airport-codes.js';
-import { runOpencli } from './opencli.js';
+import { readFlightCardsWithBrowser, runOpencli } from './opencli.js';
 
 const root = path.resolve('data/raw/ctrip');
 const asList = (value) => Array.isArray(value) ? value : Array.isArray(value?.data) ? value.data : Array.isArray(value?.results) ? value.results : Array.isArray(value?.list) ? value.list : [];
-const num = (value) => { const result = Number(String(value ?? '').replace(/[^\d.]/g, '')); return Number.isFinite(result) ? result : null; };
+const num = (value) => { if (value === null || value === undefined || String(value).trim() === '') return null; const result = Number(String(value).replace(/[^\d.]/g, '')); return Number.isFinite(result) ? result : null; };
 const field = (item, ...keys) => keys.map((key) => item?.[key]).find((value) => value !== undefined && value !== null && value !== '');
 const url = (item) => field(item, 'url', 'sourceUrl', 'source_url', 'link') || null;
 const currency = (item) => { const value = field(item, 'currency'); return ['¥', '￥', 'RMB', 'CN¥'].includes(value) ? 'CNY' : value || 'CNY'; };
@@ -22,11 +22,45 @@ function limit(items, input) { return items.slice(0, Math.min(Number(input.limit
 
 export async function flights(input) {
   const origin = airportCode(input.origin); const destination = airportCode(input.destination);
-  const raw = await query('flights', 'flight', [origin, destination, '--date', input.date, '--limit', String(input.limit || 10)], input);
-  let results = asList(raw).map((item) => ({ airline: field(item, 'airline', 'airlineName'), flight_no: field(item, 'flightNo', 'flight_no') || null, aircraft: field(item, 'aircraft') || null, departure_time: field(item, 'departureTime', 'departTime'), departure_airport: field(item, 'departureAirport', 'departureAirportName'), arrival_time: field(item, 'arrivalTime', 'arriveTime'), arrival_airport: field(item, 'arrivalAirport', 'arrivalAirportName'), terminal: field(item, 'terminal', 'arrivalTerminal') || null, price: num(field(item, 'price', 'adultPrice', 'fromPrice')), currency: currency(item), cabin: field(item, 'cabin', 'cabinClass') || null, source_url: url(item) }));
+  let raw;
+  try {
+    raw = await runOpencli('flight', [origin, destination, '--date', input.date, '--limit', String(input.limit || 10)], { timeoutMs: 25_000, retries: 0 });
+    await persist('flights', input, raw);
+  } catch (error) {
+    if (error.code !== 'TIMEOUT' && !/did not render flight cards|state=timeout/i.test(error.message || '')) throw error;
+    const searchUrl = `https://flights.ctrip.com/online/list/oneway-${origin.toLowerCase()}-${destination.toLowerCase()}?depdate=${input.date}&cabin=Y_S_C_F&adult=1&child=0&infant=0`;
+    const cards = await readFlightCardsWithBrowser(searchUrl, input.limit || 10);
+    raw = cards.map((text, index) => parseFlightCard(text, searchUrl, index));
+    await persist('flights-browser-fallback', input, raw);
+  }
+  let results = asList(raw).map((item) => { const rawAirline = field(item, 'airline', 'airlineName'); const overnight = /^\+\d+天$/.test(String(field(item, 'arrivalAirport', 'arrivalAirportName') || '')); return { airline: rawAirline ? String(rawAirline).replace(/\s*[A-Z0-9]{2}\d{3,4}.*$/i, '').trim() : rawAirline, flight_no: field(item, 'flightNo', 'flight_no') || null, aircraft: field(item, 'aircraft') || null, departure_time: field(item, 'departureTime', 'departTime'), arrival_time: field(item, 'arrivalTime', 'arriveTime'), duration: overnight ? '24小时' : field(item, 'duration'), departure_airport: field(item, 'departureAirport', 'departureAirportName'), arrival_airport: overnight ? `${input.destination}机场` : field(item, 'arrivalAirport', 'arrivalAirportName'), terminal: field(item, 'terminal', 'arrivalTerminal') || null, price: num(field(item, 'price', 'adultPrice', 'fromPrice')), currency: currency(item), cabin: field(item, 'cabin', 'cabinClass') || null, source_url: url(item) }; });
   if (input.max_price != null) results = results.filter((item) => item.price !== null && item.price <= input.max_price);
   if (input.sort_by === 'price') results.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
   return { ...meta({ ...input, origin_code: origin, destination_code: destination }), results: limit(results, input) };
+}
+
+function parseFlightCard(text, sourceUrl, index) {
+  const lines = String(text || '').split(/\n+/).map((value) => value.trim()).filter(Boolean);
+  const times = lines.map((value, lineIndex) => (/^\d{1,2}:\d{2}$/.test(value) ? lineIndex : -1)).filter((value) => value >= 0);
+  const departureIndex = times[0]; const arrivalIndex = times[1];
+  const details = departureIndex > 0 ? lines.slice(0, departureIndex).join(' ') : lines.join(' ');
+  const flightNo = details.match(/\b[A-Z0-9]{2}\d{3,4}[A-Z]?\b/i)?.[0] || null;
+  const aircraft = details.match(/(?:空客|波音|商飞)[^\s]*/)?.[0] || null;
+  const price = String(text || '').match(/[¥￥]\s*([\d,]+(?:\.\d+)?)/)?.[1]?.replace(/,/g, '') || null;
+  return {
+    rank: index + 1,
+    airline: lines[0] || null,
+    flightNo,
+    aircraft,
+    departureTime: departureIndex >= 0 ? lines[departureIndex] : null,
+    departureAirport: departureIndex >= 0 ? lines[departureIndex + 1] || null : null,
+    arrivalTime: arrivalIndex >= 0 ? lines[arrivalIndex] : null,
+    arrivalAirport: arrivalIndex >= 0 ? lines[arrivalIndex + 1] || null : null,
+    price,
+    currency: 'CNY',
+    cabin: lines.find((value) => /舱/.test(value)) || null,
+    url: sourceUrl
+  };
 }
 export async function trains(input) {
   const raw = await query('trains', 'train', [input.origin, input.destination, '--date', input.date, '--limit', String(input.limit || 20)], input);

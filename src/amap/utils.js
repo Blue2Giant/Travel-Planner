@@ -33,17 +33,43 @@ export function polylineOf(value) {
   return direct.length ? direct : (value?.steps || []).flatMap((step) => parsePolyline(step.polyline));
 }
 
+const AMAP_MIN_INTERVAL_MS = 650;
+const AMAP_QPS_CODES = new Set(['10014', '10015', '10019', '10020', '10021', '10022', '10023', 'CUQPS_HAS_EXCEEDED_THE_LIMIT', 'CKQPS_HAS_EXCEEDED_THE_LIMIT', 'CQPS_HAS_EXCEEDED_THE_LIMIT', 'QPS_HAS_EXCEEDED_THE_LIMIT', 'GATEWAY_TIMEOUT']);
+let amapQueue = Promise.resolve();
+let amapNextStart = 0;
+
+function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+async function reserveAmapSlot() {
+  const previous = amapQueue;
+  let release;
+  amapQueue = new Promise((resolve) => { release = resolve; });
+  await previous;
+  const delay = Math.max(0, amapNextStart - Date.now());
+  if (delay) await wait(delay);
+  amapNextStart = Date.now() + AMAP_MIN_INTERVAL_MS;
+  release();
+}
+
 export async function amapGet(path, params) {
   const url = new URL(`https://restapi.amap.com${path}`);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
   });
-  let response;
-  try { response = await fetch(url, { signal: AbortSignal.timeout(12000) }); }
-  catch (error) { throw new Error(error.name === 'TimeoutError' ? 'AMAP_REQUEST_TIMEOUT' : 'AMAP_NETWORK_ERROR'); }
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || String(body.status) === '0' || body.infocode && String(body.infocode) !== '10000') {
-    throw new Error(body.info || body.infocode || 'AMAP_REQUEST_FAILED');
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await reserveAmapSlot();
+    let response;
+    try { response = await fetch(url, { signal: AbortSignal.timeout(12000) }); }
+    catch (error) { throw new Error(error.name === 'TimeoutError' ? 'AMAP_REQUEST_TIMEOUT' : 'AMAP_NETWORK_ERROR'); }
+    const body = await response.json().catch(() => ({}));
+    const info = String(body.info || ''); const infocode = String(body.infocode || '');
+    if (response.ok && String(body.status) !== '0' && (!infocode || infocode === '10000')) return body;
+    const qpsLimited = AMAP_QPS_CODES.has(info) || AMAP_QPS_CODES.has(infocode);
+    if (qpsLimited && attempt < 2) { await wait(800 * (2 ** attempt)); continue; }
+    const error = new Error(info || infocode || 'AMAP_REQUEST_FAILED');
+    error.code = infocode || info || 'AMAP_REQUEST_FAILED';
+    error.retryable = qpsLimited;
+    throw error;
   }
-  return body;
+  throw new Error('AMAP_REQUEST_FAILED');
 }

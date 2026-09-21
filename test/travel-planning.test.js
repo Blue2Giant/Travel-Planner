@@ -51,8 +51,10 @@ test('builds a source-backed plan with Ctrip inventory and AMap route geometry',
   assert.ok(plan.hotel.recommended.every((hotel) => hotel.provider === 'ctrip'));
   assert.ok(plan.attractions.every((item) => item.support_count >= 2 && item.poi.provider === 'amap'));
   assert.ok(plan.days.flatMap((day) => day.route_legs).every((leg) => leg.provider === 'amap' && leg.polyline.length >= 2));
-  assert.ok(plan.days.every((day) => day.map.points[0].role === 'start'));
+  assert.ok(plan.days.filter((day) => day.map.points.length).every((day) => day.map.points[0].role === 'start'));
   assert.ok(plan.days.filter((day) => day.map.points.length > 1).every((day) => day.map.points.at(-1).role === 'end'));
+  assert.ok(plan.days.every((day) => day.map.points.length === day.timeline.filter((item) => item.type === 'attraction').length));
+  assert.ok(plan.days.every((day) => day.map.points.every((point) => !/酒店|抵达|出发/.test(point.name))));
   assert.equal(plan.transport.intercity[0].date, '2026-10-05');
   assert.ok(plan.transport.intercity[0].options.some((item) => item.mode === 'train'));
   assert.ok(plan.transport.intercity[0].options.some((item) => item.mode === 'flight'));
@@ -63,9 +65,9 @@ test('builds a source-backed plan with Ctrip inventory and AMap route geometry',
 test('renders interactive AMap containers and clickable route detail controls', async () => {
   const plan = await buildTravelPlan(request, { adapters: adapters() });
   const html = renderTravelPlan(plan, { amapJsKey: 'test-key', securityJsCode: 'test-code' });
-  assert.equal((html.match(/class="amap day-map"/g) || []).length, 6);
+  assert.equal((html.match(/class="amap day-map"/g) || []).length, plan.days.filter((day) => day.map.points.length).length);
   assert.match(html, /id="overview-map"/);
-  assert.match(html, /class="leg-button"/);
+  assert.match(html, /\.leg-button/);
   assert.match(html, /route-drawer/);
   assert.match(html, /webapi\.amap\.com\/maps/);
   assert.match(html, /景点图鉴与帖子配图/);
@@ -73,8 +75,9 @@ test('renders interactive AMap containers and clickable route detail controls', 
   assert.match(html, /dblclick/);
   assert.match(html, /transport-list/);
   assert.match(html, /2026-10-05/);
-  assert.match(html, /role==='start'\?'起'/);
-  assert.match(html, /role==='end'\?'终'/);
+  assert.match(html, /class="map-dot/);
+  assert.doesNotMatch(html, /class="map-pin/);
+  assert.match(html, /地图只显示当天景点/);
   assert.match(html, /class="hotel-list"/);
   assert.doesNotMatch(html, /<time>/);
   assert.doesNotMatch(html, /返回 .*测试酒店/);
@@ -101,5 +104,6 @@ test('runs targeted Xiaohongshu image enrichment only for missing attraction and
   assert.ok(requested.some((item) => item.includes(':food:')));
   assert.ok(plan.attractions.every((item) => item.images.length === 1));
   assert.ok(plan.foods.every((item) => item.images.length === 1));
-  assert.ok(plan.days.some((day) => day.map.points.some((point) => point.image_url)));
+  assert.ok(plan.days.every((day) => day.map.points.every((point) => !('image_url' in point))));
+  assert.ok(plan.days.some((day) => day.timeline.some((item) => item.type === 'attraction' && item.image?.url)));
 });

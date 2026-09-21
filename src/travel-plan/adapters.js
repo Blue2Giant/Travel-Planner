@@ -17,6 +17,8 @@ async function hasSavedDetails(destination) {
 
 export function createAdapters() {
   const amapKey = process.env.AMAP_WEB_SERVICE_KEY;
+  const poiCache = new Map();
+  const routeCache = new Map();
   return {
     social: {
       async research(destination, request) {
@@ -31,8 +33,17 @@ export function createAdapters() {
     },
     inventory: { searchFlights: flights, searchTrains: trains, searchHotels: hotels, getHotelDetail: hotelDetail, getHotelImages: hotelImages },
     geo: {
-      async searchPoi(query) { if (!amapKey) throw new Error('AMAP_WEB_SERVICE_KEY 未配置。'); return { ...(await resolvePlace(query, amapKey)), provider: 'amap' }; },
-      async route(origin, destination, mode = 'driving') { if (!amapKey) throw new Error('AMAP_WEB_SERVICE_KEY 未配置。'); return mode === 'transit' ? getTransitRoute(origin, destination, amapKey) : getDrivingRoute(origin, destination, amapKey); }
+      async searchPoi(query) {
+        if (!amapKey) throw new Error('AMAP_WEB_SERVICE_KEY 未配置。');
+        if (!poiCache.has(query)) poiCache.set(query, resolvePlace(query, amapKey).then((poi) => ({ ...poi, provider: 'amap' })).catch((error) => { poiCache.delete(query); throw error; }));
+        return poiCache.get(query);
+      },
+      async route(origin, destination, mode = 'driving') {
+        if (!amapKey) throw new Error('AMAP_WEB_SERVICE_KEY 未配置。');
+        const cacheKey = `${mode}:${origin.id || `${origin.location.lng},${origin.location.lat}`}->${destination.id || `${destination.location.lng},${destination.location.lat}`}`;
+        if (!routeCache.has(cacheKey)) routeCache.set(cacheKey, (mode === 'transit' ? getTransitRoute(origin, destination, amapKey) : getDrivingRoute(origin, destination, amapKey)).catch((error) => { routeCache.delete(cacheKey); throw error; }));
+        return routeCache.get(cacheKey);
+      }
     }
   };
 }
