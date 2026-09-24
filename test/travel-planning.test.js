@@ -70,6 +70,8 @@ test('renders interactive AMap containers and clickable route detail controls', 
   assert.match(html, /\.leg-button/);
   assert.match(html, /route-drawer/);
   assert.match(html, /webapi\.amap\.com\/maps/);
+  assert.equal((html.match(/class="embedded-map"/g) || []).length, plan.days.filter((day) => day.map.points.length).length + 1);
+  assert.match(html, /打开高德交互底图/);
   assert.match(html, /景点图鉴与帖子配图/);
   assert.match(html, /image-lightbox/);
   assert.match(html, /dblclick/);

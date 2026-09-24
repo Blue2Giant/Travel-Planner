@@ -11,12 +11,13 @@ function classify(message, fallback = 'UPSTREAM_PARSE_ERROR') {
   return fallback;
 }
 
-export async function runOpencli(command, args, { timeoutMs = 60_000, retries = 2 } = {}) {
+export async function runOpencli(command, args, { timeoutMs = 60_000, retries = 2, siteSession = null } = {}) {
   if (!READ_ONLY.has(command)) throw new Error('只允许已登记的只读携程命令。');
   const binary = process.env.OPENCLI_BIN || 'opencli';
   // Retaining a trace only on failure makes intermittent browser-navigation
   // failures diagnosable, while successful read-only responses remain plain JSON.
   const fullArgs = ['ctrip', command, ...args, '-f', 'json', '--trace', 'retain-on-failure'];
+  if (siteSession) fullArgs.push('--site-session', siteSession);
   return new Promise((resolve, reject) => {
     let stdout = ''; let stderr = ''; let didTimeout = false;
     const child = spawn(binary, fullArgs, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -32,7 +33,9 @@ export async function runOpencli(command, args, { timeoutMs = 60_000, retries = 
       if (didTimeout) { const error = new Error('携程查询超时，请稍后重试。'); error.code = 'TIMEOUT'; return reject(error); }
       if (code !== 0) {
         const message = (stderr || stdout || `OpenCLI 退出码 ${code}`).trim();
-        if (retries > 0 && /Navigation rejected/i.test(message)) return resolve(runOpencli(command, args, { timeoutMs, retries: retries - 1 }));
+        // 携程的反爬状态会黏在持久浏览器会话上，此后每次导航都被拒绝。
+        // 换成一次性会话通常可以立刻恢复，因此这里把重试升级为 ephemeral。
+        if (retries > 0 && /Navigation rejected/i.test(message)) return resolve(runOpencli(command, args, { timeoutMs, retries: retries - 1, siteSession: 'ephemeral' }));
         const error = new Error(message); error.code = classify(message); return reject(error);
       }
       try { resolve(JSON.parse(stdout)); }

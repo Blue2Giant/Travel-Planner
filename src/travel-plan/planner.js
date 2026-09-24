@@ -1,4 +1,5 @@
 import { dateAdd } from './requirements.js';
+import { describeTransportCity, resolveTransportCity } from '../ctrip/airport-codes.js';
 import { validateTravelPlan } from './validator.js';
 
 const timestamp = () => new Date().toISOString();
@@ -87,30 +88,37 @@ function validTrain(item, from, to) {
 
 async function planTransport(request, adapters, warnings) {
   const first = request.trip.destinations[0]; const last = request.trip.destinations.at(-1);
-  const queryPair = async (from, to, date, label, journey) => {
-    const flightResult = await attempt(`${label}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: from, destination: to, date, limit: 12 }));
-    const trainResult = await attempt(`${label}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
-    const rankedFlights = rank((flightResult?.results || []).filter((item) => item.departure_airport && item.arrival_airport).map(flight), request.preferences, journey);
-    const rankedTrains = rank((trainResult?.results || []).filter((item) => validTrain(item, from, to)).map(train), request.preferences, journey);
+  const queryPair = async (from, to, date, label, journey, preferences = request.preferences) => {
+    const hubFrom = resolveTransportCity(from); const hubTo = resolveTransportCity(to);
+    const flightResult = await attempt(`${label}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: hubFrom, destination: hubTo, date, limit: 12 }));
+    const trainResult = await attempt(`${label}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: hubFrom, destination: hubTo, date, limit: 12 }));
+    const rankedFlights = rank((flightResult?.results || []).filter((item) => item.departure_airport && item.arrival_airport).map(flight), preferences, journey);
+    const rankedTrains = rank((trainResult?.results || []).filter((item) => validTrain(item, hubFrom, hubTo)).map(train), preferences, journey);
     const failed = !flightResult && !trainResult;
     const options = [...rankedFlights.slice(0, 4), ...rankedTrains.slice(0, 3)].map((item) => ({ ...item, travel_date: date }));
-    return { date, from, to, recommended: options[0] || unavailable('flight', failed ? '上游查询失败，不能据此判断无票；请稍后重试。' : '查询成功，但未返回可推荐班次。'), alternatives: options.slice(1, 5), options };
+    const hubNote = describeTransportCity(to, hubTo) || describeTransportCity(from, hubFrom);
+    return { date, from, to, queried_from: hubFrom, queried_to: hubTo, hub_note: hubNote, recommended: options[0] || unavailable('flight', failed ? '上游查询失败，不能据此判断无票；请稍后重试。' : '查询成功，但未返回可推荐班次。'), alternatives: options.slice(1, 5), options };
   };
   const outbound = await queryPair(request.trip.origin, first, request.trip.start_date, '去程', 'outbound');
   const returning = await queryPair(last, request.trip.origin, request.trip.end_date, '返程', 'return');
+  // 用户可能同时接受“返程当天深夜”与“次日清晨”两种收尾方式。单一 end_date
+  // 只能查询其中一天，会丢掉另一种可行方案；这里额外查询次日返程并按清晨偏好排序，
+  // 让报告能同时给出两个选择，而不是替用户做取舍。
+  const nextDayReturn = await queryPair(last, request.trip.origin, dateAdd(request.trip.end_date, 1), '次日返程', 'return', { ...request.preferences, return_period: 'morning' });
   const intercity = [];
   for (let index = 0; index < request.trip.destinations.length - 1; index += 1) {
     const from = request.trip.destinations[index]; const to = request.trip.destinations[index + 1];
     const daysBeforeTransfer = request.trip.destinations.slice(0, index + 1).reduce((sum, city) => sum + dayAllocation(request).get(city), 0);
     const date = dateAdd(request.trip.start_date, daysBeforeTransfer);
-    const trainResult = await attempt(`${from}到${to}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: from, destination: to, date, limit: 12 }));
-    const flightResult = await attempt(`${from}到${to}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: from, destination: to, date, limit: 8 }));
-    const trainOptions = rank((trainResult?.results || []).filter((item) => validTrain(item, from, to)).map(train), request.preferences);
+    const hubFrom = resolveTransportCity(from); const hubTo = resolveTransportCity(to);
+    const trainResult = await attempt(`${from}到${to}列车查询失败`, warnings, () => adapters.inventory.searchTrains({ origin: hubFrom, destination: hubTo, date, limit: 12 }));
+    const flightResult = await attempt(`${from}到${to}航班查询失败`, warnings, () => adapters.inventory.searchFlights({ origin: hubFrom, destination: hubTo, date, limit: 8 }));
+    const trainOptions = rank((trainResult?.results || []).filter((item) => validTrain(item, hubFrom, hubTo)).map(train), request.preferences);
     const flightOptions = rank((flightResult?.results || []).filter((item) => item.departure_airport && item.arrival_airport).map(flight), request.preferences);
     const options = [...trainOptions.slice(0, 4), ...flightOptions.slice(0, 3)].map((item) => ({ ...item, travel_date: date }));
-    intercity.push({ from, to, date, recommended: options[0] || unavailable('train', !trainResult && !flightResult ? '城际交通查询失败，不能据此判断无票。' : '未查询到城际列车或航班。'), alternatives: options.slice(1, 5), options });
+    intercity.push({ from, to, date, queried_from: hubFrom, queried_to: hubTo, hub_note: describeTransportCity(to, hubTo) || describeTransportCity(from, hubFrom), recommended: options[0] || unavailable('train', !trainResult && !flightResult ? '城际交通查询失败，不能据此判断无票。' : '未查询到城际列车或航班。'), alternatives: options.slice(1, 5), options });
   }
-  return { outbound, return: returning, intercity };
+  return { outbound, return: returning, return_next_day: nextDayReturn, intercity };
 }
 
 function dayAllocation(request) {
@@ -124,15 +132,29 @@ function stayWindows(request) {
   return request.trip.destinations.map((city) => { const days = allocation.get(city); const checkin = dateAdd(request.trip.start_date, cursor); cursor += days; return { city, days, checkin, checkout: dateAdd(request.trip.start_date, Math.min(cursor, request.trip.nights)) }; });
 }
 
+// 携程按“城市”返回首屏候选，而目的地往往只是该市的一个区（例如顺德属于佛山），
+// 候选酒店会散布全市。这里用高德把“小红书推荐住宿范围”解析成坐标，
+// 再按到该范围的距离重排，避免把行程附近的住宿推荐成几十公里外的酒店。
 async function planHotels(request, evidence, adapters, warnings) {
   const stays = [];
   for (const window of stayWindows(request)) {
     const areaEvidence = evidence.stayAreas.find((item) => item.city === window.city); const area = areaEvidence?.name || `${window.city}市中心`;
-    const result = await attempt(`携程${window.city}酒店查询失败`, warnings, () => adapters.inventory.searchHotels({ city: window.city, checkin: window.checkin, checkout: window.checkout, keyword: area, min_score: 4, limit: 10 }));
-    const options = [...(result?.results || [])].sort((a, b) => (numeric(b.score) || 0) - (numeric(a.score) || 0) || (numeric(a.price) || Infinity) - (numeric(b.price) || Infinity)).map((item) => ({
-      ...item, city: window.city, area: item.district || area, xhs_area: area, price_per_night: item.price, rating: item.score,
-      advantages: [`靠近小红书推荐住宿范围“${area}”`, '携程真实候选，价格和库存以下单页为准。'], images: [], provider: 'ctrip', truth: 'verified'
-    }));
+    const result = await attempt(`携程${window.city}酒店查询失败`, warnings, () => adapters.inventory.searchHotels({ city: window.city, checkin: window.checkin, checkout: window.checkout, keyword: area, min_score: 4, limit: 20 }));
+    const anchor = await attempt(`高德住宿区域“${window.city} ${area}”查询失败`, warnings, () => adapters.geo.searchPoi(`${window.city} ${area}`));
+    const distanceKm = (item) => {
+      const lon = numeric(item.lon); const lat = numeric(item.lat);
+      if (!anchor?.location || lon === null || lat === null) return null;
+      return Math.round(haversine(anchor.location, { lng: lon, lat }) * 10) / 10;
+    };
+    // 同一片区内的候选距离只差几百米，不该由浮点距离决定先后；
+    // 先按公里分档，档内再比评分与价格，避免把 21.6 km 的酒店排在 21.8 km 之前。
+    const distanceBand = (item) => item.distance_km == null ? Infinity : Math.round(item.distance_km);
+    const options = [...(result?.results || [])].map((item) => ({ ...item, distance_km: distanceKm(item) }))
+      .sort((a, b) => distanceBand(a) - distanceBand(b) || (numeric(b.score) || 0) - (numeric(a.score) || 0) || (numeric(a.price) || Infinity) - (numeric(b.price) || Infinity))
+      .map((item) => ({
+        ...item, city: window.city, area: item.district || area, xhs_area: area, price_per_night: item.price, rating: item.score,
+        advantages: [item.distance_km == null ? `靠近小红书推荐住宿范围“${area}”` : `距小红书推荐住宿范围“${area}”约 ${item.distance_km} km`, '携程真实候选，价格和库存以下单页为准。'], images: [], provider: 'ctrip', truth: 'verified'
+      }));
     for (const option of options.slice(0, 5)) {
       if (!adapters.inventory.getHotelDetail) break;
       const detail = await attempt(`携程酒店详情“${option.name}”查询失败`, warnings, () => adapters.inventory.getHotelDetail({ hotel_id: option.hotel_id }));
@@ -162,7 +184,25 @@ async function stayAnchor(stay, adapters, warnings) {
   return attempt(`高德住宿区域“${stay.city} ${stay.area}”查询失败`, warnings, () => adapters.geo.searchPoi(`${stay.city} ${stay.area}`));
 }
 
-function distribute(items, days, cap) { const buckets = Array.from({ length: days }, () => []); items.slice(0, days * cap).forEach((item, index) => buckets[index % days].push(item)); return buckets; }
+// 景点已按「离住宿锚点由近到远」排序，相邻条目通常在同一片区。
+// 轮转发牌会把同片区的两个景点拆到不同天，却把相距十几公里的两个凑到同一天，
+// 与“每天做空间聚类”的设计意图相反（实测顺德：清晖园与华盖路步行街仅相距约 300 m
+// 却被分到两天，而金榜上街与渔人码头相距 13.6 km 被凑在同一天）。
+// 改为均衡的连续分块：天数尽量均分，同时让相邻（同片区）的景点留在同一天。
+function distribute(items, days, cap) {
+  const buckets = Array.from({ length: days }, () => []);
+  const usable = items.slice(0, days * cap);
+  if (!usable.length) return buckets;
+  const base = Math.floor(usable.length / days);
+  const remainder = usable.length % days;
+  let cursor = 0;
+  for (let day = 0; day < days; day += 1) {
+    const size = Math.min(cap, base + (day < remainder ? 1 : 0));
+    buckets[day] = usable.slice(cursor, cursor + size);
+    cursor += size;
+  }
+  return buckets;
+}
 function clock(totalMinutes) { return `${String(Math.floor(totalMinutes / 60) % 24).padStart(2, '0')}:${String(Math.round(totalMinutes % 60)).padStart(2, '0')}`; }
 function haversine(a, b) { const rad = (value) => value * Math.PI / 180; const dLat = rad(b.lat - a.lat); const dLng = rad(b.lng - a.lng); const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x)); }
 

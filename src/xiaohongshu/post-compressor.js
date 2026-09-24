@@ -2,12 +2,34 @@ const BAD_ENTITY_PATTERNS = [
   '也离', '我发现', '个人建议', '不一样', '依山而建', '适合', '优点', '注意', '千年古城',
   '下高铁', '去民宿', '一天给', '上午', '下午', '出发', '行程'
   , '不要导航', '一下车', '就能看到', '得搜', '离龟山', '之后', '先环湖', '一路穿梭', '一次是去', '的是上'
+  // 后缀“园”会命中“四大名园”“私家园林”这类描述，需要显式排除。
+  , '名园', '园林', '花园', '乐园', '庄园', '家园', '前往', '抵达', '位于', '推荐去', '建议去'
 ];
-const GENERIC_PLACE_WORDS = new Set(['机场', '车站', '古城', '市区', '县城', '景区', '湿地', '雪山', '环湖', '附近', '周边']);
-const PLACE_SUFFIX = /(?:古城|寺|湖|雪山|峡谷|草原|公园|村|塔|广场|景区|博物馆|市场|湿地|江|山|海)$/;
-const TIP_TERMS = /预约|开放|门票|高反|海拔|防晒|温差|交通|打车|自驾|公交|徒步|拍照|禁止|避坑|排队|时间|路况|习俗/;
-const FOOD_SUFFIX = /(?:火锅|米线|米糕|米粉|烤肉|羊排|烤包子|包子|酥油茶|青稞饼|藏香猪|牲牛肉|咖啡|茶|鱼)$/;
-const CANONICAL_FOODS = ['牦牛肉火锅', '藏式火锅', '牛肉米线', '酥油茶', '青稞饼', '酥油烤包子', '手抓羊排', '藏香猪', '奶渣蛋卷', '玉米粑粑', '藏香排骨'];
+const GENERIC_PLACE_WORDS = new Set([
+  '机场', '车站', '古城', '市区', '县城', '景区', '湿地', '雪山', '环湖', '附近', '周边',
+  '步行街', '商业街', '码头', '水乡', '老街', '小吃街', '美食街', '地铁站', '菜市场'
+]);
+const PLACE_SUFFIX = /(?:古城|寺|湖|雪山|峡谷|草原|公园|村|塔|广场|景区|博物馆|市场|湿地|江|山|海|园|水乡|码头|步行街|楼|馆|岛|温泉|书院|祠|苑|坊)$/;
+const TIP_TERMS = /预约|开放|门票|高反|海拔|防晒|温差|交通|打车|自驾|公交|地铁|徒步|拍照|禁止|避坑|排队|取号|时间|路况|习俗|停车/;
+const FOOD_SUFFIX = /(?:火锅|米线|米糕|米粉|烤肉|羊排|烤包子|包子|酥油茶|青稞饼|藏香猪|牲牛肉|咖啡|茶|鱼|奶|糕|粉|鹅|杂|粥|鸡|鲩|饭|面|腐|卷|饼|生|皮)$/;
+const CANONICAL_FOODS = [
+  // 滇西北
+  '牦牛肉火锅', '藏式火锅', '牛肉米线', '酥油茶', '青稞饼', '酥油烤包子', '手抓羊排', '藏香猪', '奶渣蛋卷', '玉米粑粑', '藏香排骨',
+  // 岭南 / 顺德
+  '双皮奶', '姜撞奶', '陈村粉', '伦教糕', '均安蒸猪', '鱼生', '烧鹅', '牛杂', '猪杂粥', '桑拿鸡', '脆肉鲩', '炸牛奶',
+  '崩砂', '煎堆', '鱼皮', '水牛奶', '煲仔饭', '砂锅粥', '布拉肠', '云吞面', '鱼腐', '酿鲮鱼', '炒牛奶', '野鸡卷',
+  '无骨鱼', '四杯鸡', '鳗鱼', '鱼饼', '生滚粥', '啫啫煲', '粥底火锅', '早茶'
+];
+// 岭南地标缺少统一后缀（园、街、码头、水乡、PLUS…），
+// 只靠后缀正则既会漏召回，也会把“岭南四大名园”这类描述当成地点。
+// 因此与 CANONICAL_FOODS 同理，按名称精确匹配，再经 canonicalEntityName 归一别名。
+const CANONICAL_PLACES = [
+  '清晖园', '逢简水乡', '顺峰山', '长鹿旅游休博园', '岭南和园', '碧江金楼', '陈村花卉世界',
+  '南国丝都丝绸博物馆', '欢乐海岸', '史努比缤纷世界', '渔人码头', '华盖路', '金榜上街',
+  '宝林寺', '青云塔', '甘竹滩', '贤鲁岛', '佛山祖庙', '西樵山', '南风古灶', '和美术馆',
+  '梁园', '千灯湖', '南海湾森林生态园', '三水长歧古村'
+];
+
 
 const clean = (value) => String(value || '')
   .replace(/#[^#\n]+\[话题\]#/g, ' ')
@@ -48,7 +70,10 @@ export function canonicalEntityName(value) {
     .trim();
   const aliases = new Map([
     ['松赞林', '噶丹·松赞林寺'], ['松赞林寺', '噶丹·松赞林寺'], ['噶丹松赞林寺', '噶丹·松赞林寺'],
-    ['普达措', '普达措国家公园'], ['独克宗', '独克宗古城']
+    ['普达措', '普达措国家公园'], ['独克宗', '独克宗古城'],
+    // 岭南：口语简称与正式名称合并，避免同一地点被拆成两个候选而达不到多帖共识。
+    ['顺峰山', '顺峰山公园'], ['华盖路', '华盖路步行街'], ['欢乐海岸', '欢乐海岸PLUS'],
+    ['大良华盖路商业步行街', '华盖路步行街'], ['顺德欢乐海岸PLUS', '欢乐海岸PLUS']
   ]);
   return aliases.get(name) || name;
 }
@@ -68,6 +93,8 @@ function explicitPlaces(content) {
   for (const match of content.matchAll(prose)) found.push(match[1]);
   const broad = /([\p{Script=Han}·]{2,14}?(?:古城|古镇|寺|湖|雪山|峡谷|草原|公园|村|塔|广场|博物馆|市场|湿地|海))(?=[，。；：、\s）)➠→]|$)/gu;
   for (const match of content.matchAll(broad)) found.push(match[1]);
+  // 地标白名单：名称里没有可依赖的通用后缀时，按全名精确匹配（先于别名归一）。
+  for (const name of CANONICAL_PLACES) if (content.includes(name)) found.push(name);
   return unique(found.map(canonicalEntityName).filter((name) => !likelyBadEntity(name)));
 }
 
@@ -76,12 +103,25 @@ function sentenceAround(content, name, maximum = 100) {
   return cut(sentence || `原帖提及${name}`, maximum);
 }
 
+// 小红书正文里菜名常和描述黏在一起（“品尝最地道的双皮奶”）。
+// 命中标准菜名时直接归一，否则去掉前缀动词，仍像整句的候选直接丢弃。
+function normalizeFoodName(value) {
+  const name = clean(value);
+  const canonical = CANONICAL_FOODS.filter((food) => name.includes(food)).sort((a, b) => b.length - a.length)[0];
+  if (canonical) return canonical;
+  const trimmed = name
+    .replace(/^(?:品尝|试试|可以试试|推荐|必吃|招牌菜是|招牌|本地人常去的|来一份|来一碗|吃一份|吃一碗|点一份|点一碗|尝一尝)+/u, '')
+    .trim();
+  if (/[的是或和，、。！？]|一家|老铺|非常|特别|好吃|值得|排队/.test(trimmed)) return '';
+  return trimmed;
+}
+
 function foods(content) {
   const found = [];
   for (const block of content.matchAll(/(?:特色美食|美食|必吃|推荐吃)[:：]\s*([^。\uff01\uff1f\n]{2,160})/g)) {
     const withoutAsides = block[1].replace(/[（(][^）)]*[）)]/g, '');
     for (const item of withoutAsides.split(/[，、/|和]\s*/)) {
-      const name = clean(item).replace(/^[\d\.、-\s]+/, '').replace(/[\s（(].*$/, '');
+      const name = normalizeFoodName(clean(item).replace(/^[\d\.、-\s]+/, '').replace(/[\s（(].*$/, ''));
       if (name.length >= 2 && name.length <= 14 && FOOD_SUFFIX.test(name)) found.push(name);
     }
   }
@@ -94,15 +134,31 @@ function foods(content) {
 function stayAreas(content) {
   const found = [];
   const patterns = [
-    /(?:住|住在|住宿选|建议住)([\p{L}\p{N}·]{2,12}(?:古城|市区|县城|车站|机场)(?:内|外|北门|南门|附近|周边)?)/gu,
+    /(?:住宿建议|住宿推荐|建议住|推荐住|住宿选|选择住|住在|落脚|住)(?:在|选|直接选|就选)?[:：\s]*[【\[]?([\p{L}\p{N}·]{2,12}?(?:古城|市区|县城|车站|机场|园|街|路|广场|商圈|海岸|码头)(?:内|外|北门|南门|东门|西门|附近|周边|一带)?)/gu,
     /([\p{L}\p{N}·]{2,12}(?:北门|南门|东门|西门|车站|机场)附近)/gu
   ];
-  for (const pattern of patterns) for (const match of content.matchAll(pattern)) found.push(clean(match[1]).replace(/^.*(?:选择住在|建议住在|直接住在|住在)/, '').replace(/^(?:在了?|于|住宿就直接选择)/, ''));
+  // “清晖园”与“清晖园附近”必须归一到同一个住宿范围，否则同一片区会被拆成两个候选而达不到多帖共识。
+  for (const pattern of patterns) for (const match of content.matchAll(pattern)) found.push(clean(match[1])
+    .replace(/^.*(?:选择住在|建议住在|直接住在|住在|住)/, '')
+    .replace(/^(?:在了?|于|住宿就直接选择)/, '')
+    .replace(/(?:附近|周边|一带)$/, ''));
   return unique(found.filter((name) => !likelyBadEntity(name))).slice(0, 5);
 }
 
+// 小红书正文常用「1️⃣2️⃣3️⃣」或「1. 2.」分行罗列注意事项。若只按句号切分，
+// 整段列表会挤成一条长句，再被截断成读不通的碎片，因此也要在序号处断开。
+const TIP_SPLIT = /[。\uff01\uff1f;；]|(?=[⚠✅📌💡])|(?=[0-9]\ufe0f?\u20e3)|(?=\ud83d\udd1f)|(?=[0-9]{1,2}[.、]\s)/;
+const stripTipPrefix = (value) => value
+  .replace(/^[⚠✅📌💡]\ufe0f?\s*/u, '')
+  .replace(/^[\uFE0F\u200b-\u200f\s]+/, '')
+  .replace(/^[0-9]\ufe0f?\u20e3\s*/u, '')
+  .replace(/^\ud83d\udd1f\s*/u, '')
+  .replace(/^[0-9]{1,2}[.、]\s*/, '')
+  .replace(/^[-–—\s]+/, '')
+  .replace(/[-–—\s]+$/, '');
+
 function tips(content) {
-  return unique(content.split(/[。\uff01\uff1f;；]|(?=[⚠✅📌💡])/).map((item) => clean(item).replace(/^[⚠✅📌💡]+\s*/, '')).filter((sentence) => TIP_TERMS.test(sentence)))
+  return unique(content.split(TIP_SPLIT).map((item) => stripTipPrefix(clean(item))).filter((sentence) => TIP_TERMS.test(sentence)))
     .map((sentence) => cut(sentence, 100)).slice(0, 6);
 }
 

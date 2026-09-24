@@ -11,9 +11,18 @@ async function writeJson(file, value) { await mkdir(path.dirname(file), { recurs
 
 export async function buildTravelPlan(input, { adapters = createAdapters() } = {}) { return createTravelPlan(parseTravelRequest(input), adapters); }
 
+// 产物文件名默认只由「目的地 + 起止日期」决定，同一路线换个出发地或再跑一次就会
+// 覆盖上一版 HTML（output/ 是提交进仓库的示例目录，覆盖即丢失）。传入 label 会把它
+// 作为前缀，让「上海出发」这类变体各自留档，例如 上海-丽江-香格里拉-2026-10-02-2026-10-07.html。
+export function planSlug(plan, label) {
+  const prefix = label ? `${fileSlug(label)}-` : '';
+  return `${prefix}${fileSlug(plan.trip.destination)}-${plan.trip.start_date}-${plan.trip.end_date}`;
+}
+
 export async function generateTravelPlan(input, options = {}) {
   const plan = await createTravelPlan(parseTravelRequest(input), options.adapters || createAdapters());
-  const slug = `${fileSlug(plan.trip.destination)}-${plan.trip.start_date}-${plan.trip.end_date}`;
+  const label = options.label || (typeof input === 'object' && input ? input.label : '');
+  const slug = planSlug(plan, label);
   const requestFile = path.join(ROOT, 'data/raw/travel-plans', `${slug}-request.json`);
   const planFile = path.join(ROOT, 'data/processed/travel-plans', `${slug}.json`);
   const validationFile = path.join(ROOT, 'data/processed/travel-plans', `${slug}-validation.json`);

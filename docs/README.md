@@ -7,3 +7,4 @@
 - [携程 OpenCLI 与 MCP 方案](ctrip-opencli-mcp-plan.md)
 - [小红书攻略 MCP MVP](xiaohongshu-guide-mcp-mvp.md)
 - [小红书来源 URL 归一化](xiaohongshu-source-url-fix.md)
+- [岭南目的地：实体抽取与交通枢纽归一](lingnan-extraction-and-transport-hub-fix.md)

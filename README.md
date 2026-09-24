@@ -30,6 +30,8 @@
 - [京都旅行攻略](output/京都.html)
 - [上海旅行攻略](output/上海.html)
 - [丽江 · 香格里拉 2026-10-02—10-07 旅行规划](output/丽江-香格里拉-2026-10-02-2026-10-07.html)
+- [上海 → 丽江 · 香格里拉 2026-10-02—10-07 旅行规划](output/上海-丽江-香格里拉-2026-10-02-2026-10-07.html)
+- [顺德 2026-10-02—10-07 旅行规划](output/顺德-2026-10-02-2026-10-07.html)
 
 示例是生成时刻的结果快照，仅用于展示页面和数据结构。票价、余票、营业信息与旅行建议都可能变化，请以来源平台的当前页面为准。
 
@@ -184,6 +186,23 @@ npm run travel-plan -- \
   --max-commute="180"
 ```
 
+可选的时间偏好与命名参数：
+
+```bash
+npm run travel-plan -- \
+  --origin="上海" \
+  --destinations="丽江、香格里拉" \
+  --start="2026-10-02" \
+  --end="2026-10-07" \
+  --outbound-period="morning" \
+  --return-period="late_night" \
+  --label="上海"
+```
+
+- `--outbound-period` / `--return-period`：`morning`、`afternoon`、`evening`、`late_night`。`morning` 让去程落在 07:00–11:59，`late_night` 让返程抵达时间不早于 21:00。
+- 返程会同时查询 `--end` 当天与次日，HTML 里分成「推荐返程」和「返程备选（次日清晨）」两块，方便在“当晚深夜走”和“次日早上走”之间比较。
+- `--label`：产物文件名前缀。默认文件名只由目的地和日期决定，同一路线换出发地或重跑会**覆盖**上一版 `output/` 示例；加 `--label="上海"` 会生成 `上海-丽江-香格里拉-2026-10-02-2026-10-07.html`，各自留档。
+
 也可以传入 JSON：
 
 ```bash
@@ -192,10 +211,16 @@ npm run travel-plan -- --input=/absolute/path/to/request.json
 
 结果包括：
 
-- `output/<目的地>-<开始日期>-<结束日期>.html`
+- `output/[<label>-]<目的地>-<开始日期>-<结束日期>.html`
 - `data/processed/travel-plans/<名称>.json`
 - `data/processed/travel-plans/<名称>-validation.json`
 - `data/raw/travel-plans/<名称>-request.json`
+
+只想改展示层时不必重跑全流程（一轮实时编排约 11 分钟），可用已保存的 plan JSON 直接重渲染：
+
+```bash
+node scripts/render-plan.js data/processed/travel-plans/<名称>.json output/<名称>.html
+```
 
 HTML 使用 [香格里拉 → 丽江样例](output/香格里拉-丽江-2026-10-02-2026-10-07.html) 的视觉体系，但所有内容、酒店、班次、POI 和路线都来自当前请求。每一天有独立高德地图；点击景点可以定位，点击通勤段可以高亮路径并查看高德返回的逐步说明。
 

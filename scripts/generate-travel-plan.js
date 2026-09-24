@@ -12,6 +12,7 @@ const inlineInput = {
   destination: value('destinations')?.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
   start_date: value('start'),
   end_date: value('end'),
+  label: value('label'),
   preferences: { pace: value('pace') || 'moderate', ...(value('outbound-period') ? { outbound_period: value('outbound-period') } : {}), ...(value('return-period') ? { return_period: value('return-period') } : {}) },
   constraints: {
     ...(value('max-attractions') ? { max_daily_attractions: Number(value('max-attractions')) } : {}),
